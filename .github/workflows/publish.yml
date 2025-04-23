@@ -73,13 +73,15 @@ jobs:
             #   if: steps.check_branch.outputs.on_main == 'true'
             #   run: go build -v ./...
 
-            # Step 7: Notify Go Proxy (Recommended)
-            # Explicitly ask the Go proxy to fetch the new version.
-            # This can speed up the availability of the module version.
-            - name: Notify Go Proxy
+            # Step 7: Attempt to Notify Go Proxy (Recommended)
+            # Attempts to ask the Go proxy to fetch the new version using 'go list'.
+            # This step ignores the result/errors of the command (e.g., git auth errors)
+            # as the proxy will eventually index the tag anyway.
+            - name: Attempt to Notify Go Proxy
               if: steps.check_branch.outputs.on_main == 'true'
               run: |
                   # Configure Git to use HTTPS instead of SSH for GitHub URLs and disable prompts
+                  # This might help prevent some errors when 'go list' internally uses git.
                   git config --global url."https://github.com/".insteadOf git@github.com:
                   export GIT_TERMINAL_PROMPT=0
 
@@ -96,10 +98,13 @@ jobs:
                   fi
 
                   # Add a small delay to allow the proxy potentially sync (optional, adjust as needed)
-                  echo "Waiting 15 seconds before notifying proxy..."
+                  echo "Waiting 15 seconds before attempting to notify proxy..."
                   sleep 15
 
-                  echo "Notifying proxy about module $MODULE_PATH version $VERSION ..."
-                  # Run the go list command with the proxy set
-                  # Use -x flag for verbose output from go command for debugging if needed
-                  GOPROXY=proxy.golang.org go list -m $MODULE_PATH@$VERSION
+                  echo "Attempting to notify proxy about module $MODULE_PATH version $VERSION ..."
+                  # Run the go list command with the proxy set.
+                  # Use -x flag for verbose output from go command for debugging if needed.
+                  # Add '|| true' to ensure this step succeeds even if 'go list' fails.
+                  GOPROXY=proxy.golang.org go list -m $MODULE_PATH@$VERSION || true
+
+                  echo "Proxy notification attempt complete (result ignored)."
