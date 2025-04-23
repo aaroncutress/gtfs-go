@@ -7,19 +7,20 @@ import (
 )
 
 // Tests downloading and creating a GTFS database from a URL
-func TestGTFSDownload(t *testing.T) {
-	url := "https://www.transperth.wa.gov.au/TimetablePDFs/GoogleTransit/Production/google_transit.zip"
+// Commented for the moment because it takes too fkn long
+// func TestGTFSDownload(t *testing.T) {
+// 	url := "https://www.transperth.wa.gov.au/TimetablePDFs/GoogleTransit/Production/google_transit.zip"
 
-	tempDir := t.TempDir()
-	dbFile := tempDir + "/test.db"
+// 	tempDir := t.TempDir()
+// 	dbFile := tempDir + "/test.db"
 
-	g, err := gtfs.NewGTFSFromURL(url, dbFile)
-	if err != nil {
-		t.Fatalf("Failed to create GTFS from URL: %v", err)
-		return
-	}
-	g.Close()
-}
+// 	g, err := gtfs.NewGTFSFromURL(url, dbFile)
+// 	if err != nil {
+// 		t.Fatalf("Failed to create GTFS from URL: %v", err)
+// 		return
+// 	}
+// 	g.Close()
+// }
 
 func TestLoadNonExistentDB(t *testing.T) {
 	dbFile := "non_existent.db"

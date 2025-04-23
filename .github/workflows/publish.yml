@@ -2,94 +2,104 @@ name: Publish Go Module
 
 # Controls when the workflow will run
 on:
-  push:
-    tags:
-      - 'v*' # Trigger workflow on tags starting with 'v' (e.g., v1.0.0, v1.2.3)
+    push:
+        tags:
+            - "v*" # Trigger workflow on tags starting with 'v' (e.g., v1.0.0, v1.2.3)
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This job handles the publishing logic
-  publish:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
+    # This job handles the publishing logic
+    publish:
+        # The type of runner that the job will run on
+        runs-on: ubuntu-latest
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
-    steps:
-      # Step 1: Check out the repository code at the specific tag
-      # Fetch depth 0 is needed to get the full history for branch comparison.
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Fetch all history for all branches and tags
+        # Steps represent a sequence of tasks that will be executed as part of the job
+        steps:
+            # Step 1: Check out the repository code at the specific tag
+            # Fetch depth 0 is needed to get the full history for branch comparison.
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0 # Fetch all history for all branches and tags
 
-      # Step 2: Check if the tag is on the main branch
-      # This ensures we only publish tags pointing to commits in the main branch history.
-      - name: Check if tag is on main branch
-        id: check_branch # Give the step an ID to reference its outputs
-        run: |
-          # Check if the tagged commit (${{ github.sha }}) is an ancestor of the main branch.
-          # `git merge-base --is-ancestor <commit> <branch>` returns exit code 0 if true, 1 otherwise.
-          # We explicitly fetch origin/main to ensure we have the latest main branch history for comparison.
-          git fetch origin main
-          if git merge-base --is-ancestor ${{ github.sha }} origin/main; then
-            echo "Tag ${{ github.ref_name }} is on the main branch. Proceeding..."
-            # Set an output variable 'on_main' to true
-            echo "on_main=true" >> $GITHUB_OUTPUT
-          else
-            echo "Tag ${{ github.ref_name }} does not point to a commit on the main branch. Skipping publish."
-            # Set an output variable 'on_main' to false
-            echo "on_main=false" >> $GITHUB_OUTPUT
-          fi
+            # Step 2: Check if the tag is on the main branch
+            # This ensures we only publish tags pointing to commits in the main branch history.
+            - name: Check if tag is on main branch
+              id: check_branch # Give the step an ID to reference its outputs
+              run: |
+                  # Check if the tagged commit (${{ github.sha }}) is an ancestor of the main branch.
+                  # `git merge-base --is-ancestor <commit> <branch>` returns exit code 0 if true, 1 otherwise.
+                  # We explicitly fetch origin/main to ensure we have the latest main branch history for comparison.
+                  git fetch origin main
+                  if git merge-base --is-ancestor ${{ github.sha }} origin/main; then
+                    echo "Tag ${{ github.ref_name }} is on the main branch. Proceeding..."
+                    # Set an output variable 'on_main' to true
+                    echo "on_main=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "Tag ${{ github.ref_name }} does not point to a commit on the main branch. Skipping publish."
+                    # Set an output variable 'on_main' to false
+                    echo "on_main=false" >> $GITHUB_OUTPUT
+                    # Exit the job successfully if not on main, no need to proceed
+                    # exit 0 # Optional: exit cleanly if you don't want subsequent steps marked as skipped
+                  fi
 
-      # Step 3: Set up the Go environment
-      # Only run this and subsequent steps if the tag is on the main branch.
-      - name: Set up Go
-        if: steps.check_branch.outputs.on_main == 'true'
-        uses: actions/setup-go@v5
-        with:
-          # Specify the Go version you want to use
-          # It's good practice to match this with your go.mod file's go directive
-          go-version: '1.21' # Or use 'stable' or a specific version like '1.22.x'
-          # Cache Go modules to speed up subsequent runs
-          cache: true
+            # Step 3: Set up the Go environment
+            # Only run this and subsequent steps if the tag is on the main branch.
+            - name: Set up Go
+              if: steps.check_branch.outputs.on_main == 'true'
+              uses: actions/setup-go@v5
+              with:
+                  # Specify the Go version you want to use
+                  # It's good practice to match this with your go.mod file's go directive
+                  go-version: "1.21" # Or use 'stable' or a specific version like '1.22.x'
+                  # Cache Go modules to speed up subsequent runs
+                  cache: true
 
-      # Step 4: Verify the module (Optional but recommended)
-      # This step confirms the module is valid at the tagged commit.
-      - name: Verify module
-        if: steps.check_branch.outputs.on_main == 'true'
-        run: go list .
+            # Step 4: Verify the module (Optional but recommended)
+            # This step confirms the module is valid at the tagged commit.
+            - name: Verify module
+              if: steps.check_branch.outputs.on_main == 'true'
+              run: go list .
 
-      # Step 5: Run tests (Optional but highly recommended)
-      # Ensure your tests pass at the tagged commit before it's considered "published"
-      - name: Run tests
-        if: steps.check_branch.outputs.on_main == 'true'
-        run: go test ./...
+            # Step 5: Run tests (Optional but highly recommended)
+            # Ensure your tests pass at the tagged commit before it's considered "published"
+            - name: Run tests
+              if: steps.check_branch.outputs.on_main == 'true'
+              run: go test ./...
 
-      # Step 6: Build (Optional)
-      # You might want to build your main package(s) as an additional check
-      # - name: Build
-      #   if: steps.check_branch.outputs.on_main == 'true'
-      #   run: go build -v ./...
+            # Step 6: Build (Optional)
+            # You might want to build your main package(s) as an additional check
+            # - name: Build
+            #   if: steps.check_branch.outputs.on_main == 'true'
+            #   run: go build -v ./...
 
-      # Step 7: Notify Go Proxy (Recommended)
-      # Explicitly ask the Go proxy to fetch the new version.
-      # This can speed up the availability of the module version.
-      - name: Notify Go Proxy
-        if: steps.check_branch.outputs.on_main == 'true'
-        run: |
-          # Extract module path from go.mod file
-          # This assumes the module directive is the first line and formatted as 'module <path>'
-          MODULE_PATH=$(head -n 1 go.mod | cut -d ' ' -f 2)
-          # Get the tag name from the GitHub context
-          VERSION=${{ github.ref_name }}
-          # Check if MODULE_PATH and VERSION are set
-          if [ -z "$MODULE_PATH" ] || [ -z "$VERSION" ]; then
-            echo "Error: Could not determine module path or version."
-            exit 1
-          fi
-          echo "Notifying proxy about module $MODULE_PATH version $VERSION ..."
-          # Run the go list command with the proxy set
-          GOPROXY=proxy.golang.org go list -m $MODULE_PATH@$VERSION
+            # Step 7: Notify Go Proxy (Recommended)
+            # Explicitly ask the Go proxy to fetch the new version.
+            # This can speed up the availability of the module version.
+            - name: Notify Go Proxy
+              if: steps.check_branch.outputs.on_main == 'true'
+              run: |
+                  # Configure Git to use HTTPS instead of SSH for GitHub URLs and disable prompts
+                  git config --global url."https://github.com/".insteadOf git@github.com:
+                  export GIT_TERMINAL_PROMPT=0
 
-      # Note: Pushing a valid semver tag is the primary mechanism for making a version available.
-      # This workflow ensures the code is valid at the tag, the tag is on main, and optionally notifies the proxy.
+                  # Extract module path from go.mod file
+                  # This assumes the module directive is the first line and formatted as 'module <path>'
+                  MODULE_PATH=$(head -n 1 go.mod | cut -d ' ' -f 2)
+                  # Get the tag name from the GitHub context
+                  VERSION=${{ github.ref_name }}
+
+                  # Check if MODULE_PATH and VERSION are set
+                  if [ -z "$MODULE_PATH" ] || [ -z "$VERSION" ]; then
+                    echo "Error: Could not determine module path or version."
+                    exit 1
+                  fi
+
+                  # Add a small delay to allow the proxy potentially sync (optional, adjust as needed)
+                  echo "Waiting 15 seconds before notifying proxy..."
+                  sleep 15
+
+                  echo "Notifying proxy about module $MODULE_PATH version $VERSION ..."
+                  # Run the go list command with the proxy set
+                  # Use -x flag for verbose output from go command for debugging if needed
+                  GOPROXY=proxy.golang.org go list -m $MODULE_PATH@$VERSION
