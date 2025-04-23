@@ -79,65 +79,6 @@ func (t *Trip) EncodeStops() [][]any {
 
 // Decode a record into a Trip struct
 func DecodeTrip(record *sql.Row, tripStopRecords *sql.Rows) (*Trip, error) {
-	// if len(record) < 6 {
-	// 	return nil, fmt.Errorf("invalid trip record: %v", record)
-	// }
-
-	// id := Key(record[0].(string))
-	// routeID := Key(record[1].(string))
-	// serviceID := Key(record[2].(string))
-	// shapeID := Key(record[3].(string))
-	// directionInt, err := strconv.Atoi(record[4].(string))
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// direction := TripDirection(directionInt)
-	// headSign := record[5].(string)
-
-	// stops := make([]*TripStop, len(tripStopRecords))
-	// for _, tripStopRecord := range tripStopRecords {
-	// 	if len(tripStopRecord) < 6 {
-	// 		return nil, fmt.Errorf("invalid trip stop record: %v", tripStopRecord)
-	// 	}
-	// 	stopID := Key(tripStopRecord[1].(string))
-
-	// 	i, err := strconv.Atoi(tripStopRecord[2].(string))
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-
-	// 	arrivalTime, err := strconv.Atoi(tripStopRecord[3].(string))
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	departureTime, err := strconv.Atoi(tripStopRecord[4].(string))
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	timepointInt, err := strconv.Atoi(tripStopRecord[5].(string))
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	timepoint := TripTimepoint(timepointInt)
-
-	// 	stops[i] = &TripStop{
-	// 		StopID:        stopID,
-	// 		ArrivalTime:   uint(arrivalTime),
-	// 		DepartureTime: uint(departureTime),
-	// 		Timepoint:     timepoint,
-	// 	}
-	// }
-
-	// return &Trip{
-	// 	ID:        id,
-	// 	RouteID:   routeID,
-	// 	ServiceID: serviceID,
-	// 	ShapeID:   shapeID,
-	// 	Direction: direction,
-	// 	Headsign:  headSign,
-	// 	Stops:     stops,
-	// }, nil
-
 	var id, routeID, serviceID, shapeID, headsign string
 	var directionInt int
 	err := record.Scan(&id, &routeID, &serviceID, &shapeID, &directionInt, &headsign)
@@ -165,6 +106,10 @@ func DecodeTrip(record *sql.Row, tripStopRecords *sql.Rows) (*Trip, error) {
 			Timepoint:     timepoint,
 		})
 		sequences = append(sequences, seq)
+	}
+
+	if err := tripStopRecords.Err(); err != nil {
+		return nil, err
 	}
 
 	// Sort stops by sequence

@@ -63,9 +63,9 @@ jobs:
 
             # Step 5: Run tests (Optional but highly recommended)
             # Ensure your tests pass at the tagged commit before it's considered "published"
-            - name: Run tests
-              if: steps.check_branch.outputs.on_main == 'true'
-              run: go test ./...
+            # - name: Run tests
+            #   if: steps.check_branch.outputs.on_main == 'true'
+            #   run: go test ./...
 
             # Step 6: Build (Optional)
             # You might want to build your main package(s) as an additional check

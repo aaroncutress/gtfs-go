@@ -58,6 +58,10 @@ func DecodeServiceExceptions(record *sql.Rows) ([]*ServiceException, error) {
 		})
 	}
 
+	if err := record.Err(); err != nil {
+		return nil, err
+	}
+
 	return serviceExceptions, nil
 }
 

@@ -30,31 +30,6 @@ func (s *Shape) Encode() [][]any {
 
 // Decode a slice of records into a Shape struct
 func DecodeShape(records *sql.Rows) (*Shape, error) {
-	// if len(records) == 0 {
-	// 	return nil, nil
-	// }
-
-	// id := Key(records[0][0].(string))
-	// coordinates := make([]Coordinate, len(records))
-	// for _, record := range records {
-	// 	if len(record) < 3 {
-	// 		return nil, nil
-	// 	}
-
-	// 	coordStr := record[2].(string)
-	// 	coord, err := NewCoordinateFromString(coordStr)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-
-	// 	i, err := strconv.Atoi(record[1].(string))
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-
-	// 	coordinates[i] = coord
-	// }
-
 	var id, coordStr string
 	var seq int
 	coordinates := make([]Coordinate, 0)
@@ -71,6 +46,10 @@ func DecodeShape(records *sql.Rows) (*Shape, error) {
 		}
 		coordinates = append(coordinates, coord)
 		sequences = append(sequences, seq)
+	}
+
+	if err := records.Err(); err != nil {
+		return nil, err
 	}
 
 	// Sort coordinates by sequence

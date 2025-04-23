@@ -89,6 +89,10 @@ func DecodeRoute(record *sql.Row, routeStopRecords *sql.Rows) (*Route, error) {
 		route.Stops = append(route.Stops, Key(stopID))
 	}
 
+	if err := routeStopRecords.Err(); err != nil {
+		return nil, err
+	}
+
 	return route, nil
 }
 

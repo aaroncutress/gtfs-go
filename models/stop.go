@@ -55,33 +55,6 @@ func (s *Stop) Encode() []any {
 
 // Decode a record into a Stop struct
 func DecodeStop(record *sql.Row) (*Stop, error) {
-	// if len(record) < 7 {
-	// 	return nil, errors.New("record does not contain enough fields")
-	// }
-
-	// id := Key(record[0].(string))
-	// parentID := Key(record[1].(string))
-	// code := record[2].(string)
-	// name := record[3].(string)
-
-	// locationStr := record[4].(string)
-	// location, err := NewCoordinateFromString(locationStr)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// locationTypeInt, err := strconv.Atoi(record[5].(string))
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// locationType := LocationType(locationTypeInt)
-
-	// supportedModesInt, err := strconv.Atoi(record[6].(string))
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// supportedModes := ModeFlag(supportedModesInt)
-
 	var id, code, name, parentID, locationStr string
 	var locationTypeInt, supportedModesInt int
 	err := record.Scan(&id, &parentID, &code, &name, &locationStr, &locationTypeInt, &supportedModesInt)

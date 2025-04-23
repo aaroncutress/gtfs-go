@@ -89,6 +89,11 @@ func (g *GTFS) GetTripsByRouteID(routeID models.Key) ([]*models.Trip, error) {
 		}
 		trips = append(trips, trip)
 	}
+
+	if err := records.Err(); err != nil {
+		return nil, err
+	}
+
 	return trips, nil
 }
 
