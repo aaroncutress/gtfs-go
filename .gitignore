@@ -1,0 +1,11 @@
+# Environment
+*.env
+
+# Editor
+.vscode/
+.idea/
+.zed/
+
+# Database
+*.db
+*.sqlite
