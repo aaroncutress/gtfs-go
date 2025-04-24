@@ -8,30 +8,41 @@ import (
 	"github.com/kelindar/column"
 )
 
+type serviceCache struct {
+	Service    *models.Service
+	Exceptions []*models.ServiceException
+}
+
 // Checks if the given trip is running today
-func (g *GTFS) IsRunningToday(tripID models.Key) (bool, error) {
-	// Retrieve the trip and service information
-	trip, err := g.GetTripByID(tripID)
-	if err != nil {
-		return false, err
-	}
-	service, err := g.GetServiceByID(trip.ServiceID)
-	if err != nil {
-		return false, err
-	}
-	exceptions, err := g.GetServiceExceptionsByServiceID(trip.ServiceID)
-	if err != nil {
-		return false, err
+func isRunningToday(g *GTFS, trip *models.Trip, cache *map[models.Key]*serviceCache) (bool, error) {
+	cached, ok := (*cache)[trip.ServiceID]
+	if !ok {
+		// Retrieve the trip and service information
+		service, err := g.GetServiceByID(trip.ServiceID)
+		if err != nil {
+			return false, err
+		}
+		exceptions, err := g.GetServiceExceptionsByServiceID(trip.ServiceID)
+		if err != nil {
+			return false, err
+		}
+
+		// Cache the service and exceptions
+		cached = &serviceCache{
+			Service:    service,
+			Exceptions: exceptions,
+		}
+		(*cache)[trip.ServiceID] = cached
 	}
 
 	today := time.Now().Truncate(24 * time.Hour)
 	dayOfWeek := today.Weekday()
 
 	// Check if the service is not (normally) running today
-	if (service.Weekdays & (1 << dayOfWeek)) == 0 {
-		if len(exceptions) > 0 {
+	if (cached.Service.Weekdays & (1 << dayOfWeek)) == 0 {
+		if len(cached.Exceptions) > 0 {
 			// Check if there are any exceptions for today
-			for _, exception := range exceptions {
+			for _, exception := range cached.Exceptions {
 				if exception.Date == today && exception.Type == models.AddedExceptionType {
 					return true, nil
 				}
@@ -43,12 +54,12 @@ func (g *GTFS) IsRunningToday(tripID models.Key) (bool, error) {
 	}
 
 	// If the service is running today and there are exceptions, return true
-	if len(exceptions) == 0 {
+	if len(cached.Exceptions) == 0 {
 		return true, nil
 	}
 
 	// Check if any exceptions are set for today and whether the service is removed
-	for _, exception := range exceptions {
+	for _, exception := range cached.Exceptions {
 		if exception.Date == today && exception.Type == models.RemovedExceptionType {
 			return false, nil
 		}
@@ -82,9 +93,10 @@ func (g *GTFS) GetAllCurrentTrips() ([]*models.Trip, error) {
 
 	log.Info("Checking each trip for current status")
 
+	cache := make(map[models.Key]*serviceCache)
 	for _, trip := range trips {
 		// Check if the trip is running today
-		isRunning, err := g.IsRunningToday(trip.ID)
+		isRunning, err := isRunningToday(g, trip, &cache)
 		if err != nil {
 			return nil, err
 		}
