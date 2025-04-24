@@ -1,12 +1,15 @@
 package models
 
 import (
-	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strconv"
+	"strings"
+
+	"github.com/kelindar/column"
 )
 
 type TripDirection uint8
@@ -25,10 +28,69 @@ const secondsInDay = 60 * 60 * 24
 
 // Represents a stop in a trip
 type TripStop struct {
-	StopID        Key
-	ArrivalTime   uint
-	DepartureTime uint
-	Timepoint     TripTimepoint
+	StopID        Key           `json:"stop_id"`
+	ArrivalTime   uint          `json:"arrival_time"`
+	DepartureTime uint          `json:"departure_time"`
+	Timepoint     TripTimepoint `json:"timepoint"`
+}
+
+// Converts the TripStop to a string representation
+func (ts *TripStop) String() string {
+	return fmt.Sprintf("%s,%d,%d,%d", ts.StopID, ts.ArrivalTime, ts.DepartureTime, ts.Timepoint)
+}
+
+// Converts a string representation back to a TripStop
+func (ts *TripStop) FromString(s string) error {
+	parts := strings.Split(s, ",")
+	if len(parts) != 4 {
+		return errors.New("invalid TripStop string format")
+	}
+
+	stopID := Key(parts[0])
+	arrivalTime, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return err
+	}
+	departureTime, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return err
+	}
+	timepointInt, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return err
+	}
+
+	ts.StopID = stopID
+	ts.ArrivalTime = uint(arrivalTime)
+	ts.DepartureTime = uint(departureTime)
+	ts.Timepoint = TripTimepoint(timepointInt)
+	return nil
+}
+
+type TripStopArray []*TripStop
+
+func (tsa TripStopArray) MarshalBinary() ([]byte, error) {
+	var serialized []string
+	for _, stop := range tsa {
+		serialized = append(serialized, stop.String())
+	}
+	return []byte(strings.Join(serialized, "|")), nil
+}
+
+func (tsa *TripStopArray) UnmarshalBinary(data []byte) error {
+	lines := strings.Split(string(data), "|")
+	stops := make([]*TripStop, 0)
+	for _, line := range lines {
+		stop := &TripStop{}
+		err := stop.FromString(line)
+		if err != nil {
+			return err
+		}
+		stops = append(stops, stop)
+	}
+
+	*tsa = stops
+	return nil
 }
 
 // Intermediate structure to hold trip stop sequences
@@ -45,87 +107,101 @@ type Trip struct {
 	ShapeID   Key
 	Direction TripDirection
 	Headsign  string
-	Stops     []*TripStop
+	Stops     TripStopArray
 }
 type TripMap map[Key]*Trip
 
-// Encode the Trip struct into a record
-func (t *Trip) Encode() []any {
-	return []any{
-		string(t.ID),
-		string(t.RouteID),
-		string(t.ServiceID),
-		string(t.ShapeID),
-		int(t.Direction),
-		t.Headsign,
-	}
+// Saves the trip to the database
+func (t Trip) Save(row column.Row) error {
+	row.SetString("route_id", string(t.RouteID))
+	row.SetString("service_id", string(t.ServiceID))
+	row.SetString("shape_id", string(t.ShapeID))
+	row.SetUint("direction", uint(t.Direction))
+	row.SetString("headsign", t.Headsign)
+	row.SetRecord("stops", t.Stops)
+
+	return nil
 }
 
-// Encode the Trip stops into a list of records
-func (t *Trip) EncodeStops() [][]any {
-	records := make([][]any, len(t.Stops))
-	for i, stop := range t.Stops {
-		records[i] = []any{
-			string(t.ID),
-			string(stop.StopID),
-			i,
-			stop.ArrivalTime,
-			stop.DepartureTime,
-			int(stop.Timepoint),
-		}
+// Loads the trip from the database
+func (t *Trip) Load(row column.Row) error {
+	key, keyOk := row.Key()
+	routeID, routeIDOk := row.String("route_id")
+	serviceID, serviceIDOk := row.String("service_id")
+	shapeID, shapeIDOk := row.String("shape_id")
+	directionInt, directionIntOk := row.Uint("direction")
+	headSign, headSignOk := row.String("headsign")
+	stopsAny, stopsStrOk := row.Record("stops")
+
+	if !keyOk || !routeIDOk || !serviceIDOk || !shapeIDOk || !directionIntOk || !headSignOk || !stopsStrOk {
+		return errors.New("missing required fields")
 	}
-	return records
+
+	stops, ok := stopsAny.(*TripStopArray)
+	if !ok {
+		return errors.New("invalid stops format")
+	}
+
+	t.ID = Key(key)
+	t.RouteID = Key(routeID)
+	t.ServiceID = Key(serviceID)
+	t.ShapeID = Key(shapeID)
+	t.Direction = TripDirection(directionInt)
+	t.Headsign = headSign
+	t.Stops = *stops
+
+	return nil
 }
 
-// Decode a record into a Trip struct
-func DecodeTrip(record *sql.Row, tripStopRecords *sql.Rows) (*Trip, error) {
-	var id, routeID, serviceID, shapeID, headsign string
-	var directionInt int
-	err := record.Scan(&id, &routeID, &serviceID, &shapeID, &directionInt, &headsign)
-	if err != nil {
-		return nil, err
-	}
+func LoadAllTrips(txn *column.Txn) ([]*Trip, error) {
+	var e error
+	trips := make([]*Trip, 0)
 
-	stops := make([]*TripStop, 0)
-	sequences := make([]int, 0)
+	keyCol := txn.Key()
+	routeIDCol := txn.String("route_id")
+	serviceIDCol := txn.String("service_id")
+	shapeIDCol := txn.String("shape_id")
+	directionIntCol := txn.Uint("direction")
+	headSignCol := txn.String("headsign")
+	stopsAnyCol := txn.Record("stops")
 
-	for tripStopRecords.Next() {
-		var stopID string
-		var arrivalTime, departureTime uint
-		var timepointInt, seq int
-		err := tripStopRecords.Scan(&id, &stopID, &seq, &arrivalTime, &departureTime, &timepointInt)
-		if err != nil {
-			return nil, err
+	txn.Range(func(i uint32) {
+		key, keyOk := keyCol.Get()
+		routeID, routeIDOk := routeIDCol.Get()
+		serviceID, serviceIDOk := serviceIDCol.Get()
+		shapeID, shapeIDOk := shapeIDCol.Get()
+		directionInt, directionIntOk := directionIntCol.Get()
+		headSign, headSignOk := headSignCol.Get()
+		stopsAny, stopsStrOk := stopsAnyCol.Get()
+
+		if !keyOk || !routeIDOk || !serviceIDOk || !shapeIDOk || !directionIntOk || !headSignOk || !stopsStrOk {
+			e = errors.New("missing required fields")
+			return
 		}
-		timepoint := TripTimepoint(timepointInt)
 
-		stops = append(stops, &TripStop{
-			StopID:        Key(stopID),
-			ArrivalTime:   arrivalTime,
-			DepartureTime: departureTime,
-			Timepoint:     timepoint,
-		})
-		sequences = append(sequences, seq)
-	}
+		trip := &Trip{
+			ID:        Key(key),
+			RouteID:   Key(routeID),
+			ServiceID: Key(serviceID),
+			ShapeID:   Key(shapeID),
+			Direction: TripDirection(directionInt),
+			Headsign:  headSign,
+		}
 
-	if err := tripStopRecords.Err(); err != nil {
-		return nil, err
-	}
+		stops, ok := stopsAny.(*TripStopArray)
+		if !ok {
+			e = errors.New("invalid stops format")
+			return
+		}
+		trip.Stops = *stops
 
-	// Sort stops by sequence
-	sort.Slice(stops, func(i, j int) bool {
-		return sequences[i] < sequences[j]
+		trips = append(trips, trip)
 	})
 
-	return &Trip{
-		ID:        Key(id),
-		RouteID:   Key(routeID),
-		ServiceID: Key(serviceID),
-		ShapeID:   Key(shapeID),
-		Direction: TripDirection(directionInt),
-		Headsign:  headsign,
-		Stops:     stops,
-	}, nil
+	if e != nil {
+		return nil, e
+	}
+	return trips, nil
 }
 
 // Get the time that a trip starts at the first stop

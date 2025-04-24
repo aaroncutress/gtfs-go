@@ -8,4 +8,5 @@
 
 # Database
 *.db
-*.sqlite
+
+cmd/

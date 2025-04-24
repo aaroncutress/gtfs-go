@@ -1,10 +1,12 @@
 package models
 
 import (
-	"database/sql"
 	"encoding/csv"
+	"errors"
 	"io"
 	"strconv"
+
+	"github.com/kelindar/column"
 )
 
 type RouteType uint8
@@ -30,70 +32,50 @@ type Route struct {
 	Type     RouteType
 	Colour   string
 	ShapeID  Key
-	Stops    []Key
+	Stops    KeyArray
 }
 type RouteMap map[Key]*Route
 
-// Encode the Route struct into a record
-func (r *Route) Encode() []any {
-	return []any{
-		string(r.ID),
-		string(r.AgencyID),
-		r.Name,
-		int(r.Type),
-		r.Colour,
-		string(r.ShapeID),
-	}
+// Saves the route to the database
+func (r Route) Save(row column.Row) error {
+	row.SetString("agency_id", string(r.AgencyID))
+	row.SetString("name", r.Name)
+	row.SetUint("type", uint(r.Type))
+	row.SetString("colour", r.Colour)
+	row.SetString("shape_id", string(r.ShapeID))
+	row.SetRecord("stops", r.Stops)
+
+	return nil
 }
 
-// Encode the Route stops into a list of records
-func (r *Route) EncodeStops() [][]any {
-	records := make([][]any, len(r.Stops))
-	for i, stopID := range r.Stops {
-		records[i] = []any{
-			string(r.ID),
-			string(stopID),
-		}
-	}
-	return records
-}
+// Loads the route from the database
+func (r *Route) Load(row column.Row) error {
+	key, keyOk := row.Key()
+	agencyID, agencyIDOk := row.String("agency_id")
+	name, nameOk := row.String("name")
+	typeInt, typeIntOk := row.Uint("type")
+	colour, colourOk := row.String("colour")
+	shapeID, shapeIDOk := row.String("shape_id")
+	stopsAny, stopsOk := row.Record("stops")
 
-// Decode a record into a Route struct
-func DecodeRoute(record *sql.Row, routeStopRecords *sql.Rows) (*Route, error) {
-	// Decode the record into a Route struct
-	var id, agencyID, name, colour, shapeID string
-	var typeInt int
-	err := record.Scan(&id, &agencyID, &name, &typeInt, &colour, &shapeID)
-	if err != nil {
-		return nil, err
-	}
-	typeRoute := RouteType(typeInt)
-
-	route := &Route{
-		ID:       Key(id),
-		AgencyID: Key(agencyID),
-		Name:     name,
-		Type:     typeRoute,
-		Colour:   colour,
-		ShapeID:  Key(shapeID),
+	if !keyOk || !agencyIDOk || !nameOk || !typeIntOk || !colourOk || !shapeIDOk || !stopsOk {
+		return errors.New("missing required fields")
 	}
 
-	// Parse route stops
-	route.Stops = make([]Key, 0)
-	for routeStopRecords.Next() {
-		var routeID, stopID string
-		err := routeStopRecords.Scan(&routeID, &stopID)
-		if err != nil {
-			return nil, err
-		}
-		route.Stops = append(route.Stops, Key(stopID))
+	stops, ok := stopsAny.(*KeyArray)
+	if !ok {
+		return errors.New("invalid stops format")
 	}
 
-	if err := routeStopRecords.Err(); err != nil {
-		return nil, err
-	}
+	r.ID = Key(key)
+	r.AgencyID = Key(agencyID)
+	r.Name = name
+	r.Type = RouteType(typeInt)
+	r.Colour = colour
+	r.ShapeID = Key(shapeID)
+	r.Stops = *stops
 
-	return route, nil
+	return nil
 }
 
 // Load routes from the GTFS routes.txt file

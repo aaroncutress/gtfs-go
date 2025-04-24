@@ -1,9 +1,11 @@
 package models
 
 import (
-	"database/sql"
 	"encoding/csv"
+	"errors"
 	"io"
+
+	"github.com/kelindar/column"
 )
 
 // Represents an agency that provides transit services
@@ -15,30 +17,69 @@ type Agency struct {
 }
 type AgencyMap map[Key]*Agency
 
-// Encode the Agency struct into a record
-func (a *Agency) Encode() []any {
-	return []any{
-		string(a.ID),
-		a.Name,
-		a.URL,
-		a.Timezone,
-	}
+// Saves the agency to the database
+func (a Agency) Save(r column.Row) error {
+	r.SetString("name", a.Name)
+	r.SetString("url", a.URL)
+	r.SetString("timezone", a.Timezone)
+	return nil
 }
 
-// Decode a record into an Agency struct
-func DecodeAgency(record *sql.Row) (*Agency, error) {
-	var id, name, url, timezone string
-	err := record.Scan(&id, &name, &url, &timezone)
+// Loads the agency from the database
+func (a *Agency) Load(r column.Row) error {
+	key, keyOk := r.Key()
+	name, nameOk := r.String("name")
+	url, urlOk := r.String("url")
+	timezone, timezoneOk := r.String("timezone")
+
+	if !keyOk || !nameOk || !urlOk || !timezoneOk {
+		return errors.New("missing required fields")
+	}
+
+	a.ID = Key(key)
+	a.Name = name
+	a.URL = url
+	a.Timezone = timezone
+	return nil
+}
+
+// LoadAllAgencies loads all agencies from the database
+func LoadAllAgencies(txn *column.Txn) ([]*Agency, error) {
+	var agencies []*Agency
+
+	idCol := txn.Key()
+	nameCol := txn.String("name")
+	urlCol := txn.String("url")
+	timezoneCol := txn.String("timezone")
+
+	var e error
+	err := txn.Range(func(i uint32) {
+		id, idOk := idCol.Get()
+		name, nameOk := nameCol.Get()
+		url, urlOk := urlCol.Get()
+		timezone, timezoneOk := timezoneCol.Get()
+
+		if !idOk || !nameOk || !urlOk || !timezoneOk {
+			e = errors.New("missing required fields")
+			return
+		}
+
+		agencies = append(agencies, &Agency{
+			ID:       Key(id),
+			Name:     name,
+			URL:      url,
+			Timezone: timezone,
+		})
+	})
+
 	if err != nil {
 		return nil, err
 	}
+	if e != nil {
+		return nil, e
+	}
 
-	return &Agency{
-		ID:       Key(id),
-		Name:     name,
-		URL:      url,
-		Timezone: timezone,
-	}, nil
+	return agencies, nil
 }
 
 // Load agencies from the GTFS agency.txt file

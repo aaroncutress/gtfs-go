@@ -1,12 +1,35 @@
 package models
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/umahmood/haversine"
 )
 
 type Key string
+type KeyArray []Key
+
+func (ka KeyArray) MarshalBinary() ([]byte, error) {
+	var serialized []string
+	for _, key := range ka {
+		serialized = append(serialized, string(key))
+	}
+	return []byte(strings.Join(serialized, "|")), nil
+}
+
+func (ka *KeyArray) UnmarshalBinary(data []byte) error {
+	lines := strings.Split(string(data), "|")
+	keys := make([]Key, 0)
+	for _, line := range lines {
+		keys = append(keys, Key(line))
+	}
+	*ka = keys
+	return nil
+}
 
 // --- Coordinate ---
 
@@ -56,4 +79,51 @@ func (c Coordinate) DistanceTo(other Coordinate) float64 {
 		haversine.Coord{Lat: other.Latitude, Lon: other.Longitude},
 	)
 	return km
+}
+
+type CoordinateArray []Coordinate
+
+func (ca CoordinateArray) MarshalBinary() ([]byte, error) {
+	buf := new(bytes.Buffer)
+	count := uint32(len(ca))
+
+	if err := binary.Write(buf, binary.LittleEndian, count); err != nil {
+		return nil, err
+	}
+
+	for _, coord := range ca {
+		if err := binary.Write(buf, binary.LittleEndian, coord.Latitude); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(buf, binary.LittleEndian, coord.Longitude); err != nil {
+			return nil, err
+		}
+	}
+
+	return buf.Bytes(), nil
+}
+
+func (ca *CoordinateArray) UnmarshalBinary(data []byte) error {
+	reader := bytes.NewReader(data)
+
+	var count uint32
+	if err := binary.Read(reader, binary.LittleEndian, &count); err != nil {
+		return err
+	}
+
+	*ca = make(CoordinateArray, count)
+	for i := uint32(0); i < count; i++ {
+		if err := binary.Read(reader, binary.LittleEndian, &(*ca)[i].Latitude); err != nil {
+			return err
+		}
+		if err := binary.Read(reader, binary.LittleEndian, &(*ca)[i].Longitude); err != nil {
+			return err
+		}
+	}
+
+	if reader.Len() > 0 {
+		return errors.New("extra data after unmarshalling")
+	}
+
+	return nil
 }

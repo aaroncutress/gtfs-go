@@ -1,35 +1,242 @@
 package internal
 
 import (
-	"database/sql"
+	"archive/zip"
+	"encoding/json"
+	"errors"
+	"math"
+	"os"
+	"strconv"
 
 	"github.com/aaroncutress/gtfs-go/models"
+	"github.com/kelindar/column"
 )
 
-func executePragmas(db *sql.DB) {
-	// Speed up inserts significantly by reducing disk syncs.
-	// CAUTION: Increases risk of database corruption if the process crashes.
-	// Only use if you can easily rebuild the database.
-	db.Exec("PRAGMA synchronous = OFF;")
+const CoordinatesPerRow = 2000
 
-	// Use memory for the rollback journal. Faster, but journal is lost on crash.
-	_, err := db.Exec("PRAGMA journal_mode = MEMORY;")
-	if err != nil {
-		db.Exec("PRAGMA journal_mode = WAL;")
-	}
+type GTFSDB struct {
+	Agencies          *column.Collection
+	Routes            *column.Collection
+	Services          *column.Collection
+	ServiceExceptions *column.Collection
+	Shapes            *column.Collection
+	Stops             *column.Collection
+	Trips             *column.Collection
 
-	// Increase cache size (e.g., 2GB). Adjust based on available RAM.
-	// Negative value means KiB, positive means number of pages.
-	db.Exec("PRAGMA cache_size = -2000000;") // -2000000 = 2,000,000 KiB = ~2GB
-
-	// Use exclusive locking within the transaction, can reduce contention.
-	db.Exec("PRAGMA locking_mode = EXCLUSIVE;")
-
-	// Store temporary tables/indices in memory.
-	db.Exec("PRAGMA temp_store = MEMORY;")
+	// Metadata
+	MaxShapeLength int
 }
 
-func PopulateDB(db *sql.DB,
+// Initalize the GTFS database schema
+func (db *GTFSDB) Initialize() {
+	// Initialize agencies
+	db.Agencies = column.NewCollection()
+	db.Agencies.CreateColumn("id", column.ForKey())
+	db.Agencies.CreateColumn("name", column.ForString())
+	db.Agencies.CreateColumn("url", column.ForString())
+	db.Agencies.CreateColumn("timezone", column.ForString())
+
+	// Initialize routes
+	db.Routes = column.NewCollection()
+	db.Routes.CreateColumn("id", column.ForKey())
+	db.Routes.CreateColumn("agency_id", column.ForString())
+	db.Routes.CreateColumn("name", column.ForString())
+	db.Routes.CreateColumn("type", column.ForUint())
+	db.Routes.CreateColumn("colour", column.ForString())
+	db.Routes.CreateColumn("shape_id", column.ForString())
+	db.Routes.CreateColumn("stops", column.ForRecord(func() *models.KeyArray {
+		return new(models.KeyArray)
+	}))
+
+	// Initialize services
+	db.Services = column.NewCollection()
+	db.Services.CreateColumn("id", column.ForKey())
+	db.Services.CreateColumn("weekdays", column.ForUint())
+	db.Services.CreateColumn("start_date", column.ForString())
+	db.Services.CreateColumn("end_date", column.ForString())
+
+	// Initialize service exceptions
+	db.ServiceExceptions = column.NewCollection()
+	db.ServiceExceptions.CreateColumn("service_id", column.ForString())
+	db.ServiceExceptions.CreateColumn("date", column.ForString())
+	db.ServiceExceptions.CreateColumn("type", column.ForUint())
+
+	// Initialize shapes
+	db.Shapes = column.NewCollection()
+	db.Shapes.CreateColumn("id", column.ForKey())
+	numRows := int(math.Ceil(float64(db.MaxShapeLength) / float64(CoordinatesPerRow)))
+	for i := range numRows {
+		db.Shapes.CreateColumn("coordinates"+strconv.Itoa(i), column.ForRecord(func() *models.CoordinateArray {
+			return new(models.CoordinateArray)
+		}))
+	}
+
+	// Initialize stops
+	db.Stops = column.NewCollection()
+	db.Stops.CreateColumn("id", column.ForKey())
+	db.Stops.CreateColumn("code", column.ForString())
+	db.Stops.CreateColumn("name", column.ForString())
+	db.Stops.CreateColumn("parent_id", column.ForString())
+	db.Stops.CreateColumn("location", column.ForString())
+	db.Stops.CreateColumn("location_type", column.ForUint())
+	db.Stops.CreateColumn("supported_modes", column.ForUint())
+
+	// Initialize trips
+	db.Trips = column.NewCollection()
+	db.Trips.CreateColumn("id", column.ForKey())
+	db.Trips.CreateColumn("route_id", column.ForString())
+	db.Trips.CreateColumn("service_id", column.ForString())
+	db.Trips.CreateColumn("shape_id", column.ForString())
+	db.Trips.CreateColumn("direction", column.ForUint())
+	db.Trips.CreateColumn("headsign", column.ForString())
+	db.Trips.CreateColumn("stops", column.ForRecord(func() *models.TripStopArray {
+		return new(models.TripStopArray)
+	}))
+}
+
+// Load loads the GTFS database from a zip file.
+func (db *GTFSDB) Load(filePath string) (int, error) {
+	// Initialize the database schema
+	db.Initialize()
+
+	// Open the zip file
+	zipFile, err := os.Open(filePath)
+	if err != nil {
+		return 0, err
+	}
+	defer zipFile.Close()
+
+	fileStat, err := zipFile.Stat()
+	if err != nil {
+		return 0, err
+	}
+
+	// Create a new zip reader
+	zipReader, err := zip.NewReader(zipFile, fileStat.Size())
+	if err != nil {
+		return 0, err
+	}
+
+	for _, file := range zipReader.File {
+		// Open the file in the zip archive
+		f, err := file.Open()
+		if err != nil {
+			return 0, err
+		}
+		defer f.Close()
+
+		// Load the file into the appropriate collection
+		switch file.Name {
+		case "agencies":
+			err = db.Agencies.Restore(f)
+		case "routes":
+			err = db.Routes.Restore(f)
+		case "services":
+			err = db.Services.Restore(f)
+		case "service_exceptions":
+			err = db.ServiceExceptions.Restore(f)
+		case "shapes":
+			err = db.Shapes.Restore(f)
+		case "stops":
+			err = db.Stops.Restore(f)
+		case "trips":
+			err = db.Trips.Restore(f)
+		default:
+			continue
+		}
+
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	// Load the metadata file
+	metadataFile, err := zipReader.Open("metadata.json")
+	if err != nil {
+		return 0, err
+	}
+	defer metadataFile.Close()
+
+	metadata := make(map[string]any)
+	err = json.NewDecoder(metadataFile).Decode(&metadata)
+	if err != nil {
+		return 0, err
+	}
+
+	versionF, ok := metadata["version"].(float64)
+	if !ok {
+		return 0, errors.New("invalid metadata version")
+	}
+	version := int(versionF)
+
+	maxShapeLengthF, ok := metadata["max_shape_length"].(float64)
+	if !ok {
+		return 0, errors.New("invalid metadata max_shape_length")
+	}
+	maxShapeLength := int(maxShapeLengthF)
+	db.MaxShapeLength = maxShapeLength
+
+	return version, nil
+}
+
+// Save saves the GTFS database to a zip file.
+func (db *GTFSDB) Save(filePath string, version int) error {
+	zipFile, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer zipFile.Close()
+
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	// Create a new zip file for each collection
+	collections := map[string]*column.Collection{
+		"agencies":           db.Agencies,
+		"routes":             db.Routes,
+		"services":           db.Services,
+		"service_exceptions": db.ServiceExceptions,
+		"shapes":             db.Shapes,
+		"stops":              db.Stops,
+		"trips":              db.Trips,
+	}
+
+	// Write each collection to a separate file in the zip archive
+	for name, collection := range collections {
+		file, err := zipWriter.Create(name)
+		if err != nil {
+			return err
+		}
+
+		err = collection.Snapshot(file)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Write the metadata file
+	metadataFile, err := zipWriter.Create("metadata.json")
+	if err != nil {
+		return err
+	}
+	metadata := map[string]any{
+		"version":          version,
+		"max_shape_length": db.MaxShapeLength,
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	_, err = metadataFile.Write(metadataJSON)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Populates the GTFS database with data from the provided maps.
+func (db *GTFSDB) Populate(
 	agencies models.AgencyMap,
 	routes models.RouteMap,
 	services models.ServiceMap,
@@ -38,346 +245,76 @@ func PopulateDB(db *sql.DB,
 	stops models.StopMap,
 	trips models.TripMap,
 ) error {
-	// Execute PRAGMAs to optimize performance
-	executePragmas(db)
-
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	// Save agencies
-	agencyStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO agency (id, name, url, timezone)
-		VALUES (?, ?, ?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer agencyStmt.Close()
-
+	// Populate agencies
 	for _, agency := range agencies {
-		_, err := agencyStmt.Exec(agency.Encode()...)
+		err := db.Agencies.InsertKey(string(agency.ID), agency.Save)
 		if err != nil {
 			return err
 		}
 	}
 
-	// Save routes
-	routeStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO routes (id, agency_id, name, type, colour, shape_id)
-		VALUES (?, ?, ?, ?, ?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer routeStmt.Close()
-
-	// Save route stops - prepare statement outside the loop
-	routeStopStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO routes_stops (route_id, stop_id)
-		VALUES (?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer routeStopStmt.Close()
-
+	// Populate routes
 	for _, route := range routes {
-		_, err := routeStmt.Exec(route.Encode()...)
+		err := db.Routes.InsertKey(string(route.ID), route.Save)
 		if err != nil {
 			return err
 		}
-
-		// Save route stops
-		stopsEncoded := route.EncodeStops()
-		for _, stop := range stopsEncoded {
-			_, err := routeStopStmt.Exec(stop...)
-			if err != nil {
-				return err
-			}
-		}
 	}
 
-	// Save services
-	serviceStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO services (id, weekdays, start_date, end_date)
-		VALUES (?, ?, ?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer serviceStmt.Close()
-
+	// Populate services
 	for _, service := range services {
-		_, err := serviceStmt.Exec(service.Encode()...)
+		err := db.Services.InsertKey(string(service.ID), service.Save)
 		if err != nil {
 			return err
 		}
 	}
 
-	// Save service exceptions
-	serviceExceptionStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO service_exceptions (service_id, date, type)
-		VALUES (?, ?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer serviceExceptionStmt.Close()
-
+	// Populate service exceptions
 	for _, exception := range serviceExceptions {
-		_, err := serviceExceptionStmt.Exec(exception.Encode()...)
+		_, err := db.ServiceExceptions.Insert(exception.Save)
 		if err != nil {
 			return err
 		}
 	}
 
-	// Save shapes
-	shapeStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO shapes (id, sequence, coordinate)
-		VALUES (?, ?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer shapeStmt.Close()
-
+	// Populate shapes
 	for _, shape := range shapes {
-		shapeEncoded := shape.Encode()
-		for _, record := range shapeEncoded {
-			_, err := shapeStmt.Exec(record...)
-			if err != nil {
-				return err
-			}
+		err := db.Shapes.InsertKey(string(shape.ID), func(row column.Row) error {
+			return shape.Save(row, CoordinatesPerRow)
+		})
+		if err != nil {
+			return err
 		}
 	}
 
-	// Save stops
-	stopStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO stops (id, code, name, parent_id, location, location_type, supported_modes)
-		VALUES (?, ?, ?, ?, ?, ?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer stopStmt.Close()
-
+	// Populate stops
 	for _, stop := range stops {
-		_, err := stopStmt.Exec(stop.Encode()...)
+		err := db.Stops.InsertKey(string(stop.ID), stop.Save)
 		if err != nil {
 			return err
 		}
 	}
 
-	// Save trips
-	tripStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO trips (id, route_id, service_id, shape_id, direction, headsign)
-		VALUES (?, ?, ?, ?, ?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer tripStmt.Close()
-
-	// Save trip stops - prepare statement outside the loop
-	tripStopStmt, err := tx.Prepare(`
-		INSERT OR REPLACE INTO trip_stops (trip_id, stop_id, stop_sequence, arrival_time, departure_time, timepoint)
-		VALUES (?, ?, ?, ?, ?, ?);
-	`)
-	if err != nil {
-		return err
-	}
-	defer tripStopStmt.Close()
-
+	// Populate trips
 	for _, trip := range trips {
-		_, err := tripStmt.Exec(trip.Encode()...)
+		err := db.Trips.InsertKey(string(trip.ID), trip.Save)
 		if err != nil {
 			return err
 		}
-
-		// Save trip stops
-		stopsEncoded := trip.EncodeStops()
-		for _, stop := range stopsEncoded {
-			_, err := tripStopStmt.Exec(stop...)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return tx.Commit()
-}
-
-// Creates the database schema for the GTFS data
-func InitializeDB(db *sql.DB) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	// Create agency table
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS agency (
-			id TEXT PRIMARY KEY,
-			name TEXT,
-			url TEXT,
-			timezone TEXT
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	// Create routes table
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS routes (
-			id TEXT PRIMARY KEY,
-			agency_id TEXT,
-			name TEXT,
-			type INTEGER,
-			colour TEXT,
-			shape_id TEXT,
-
-			FOREIGN KEY (agency_id) REFERENCES agency(id)
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	// Create joining table for routes and stops
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS routes_stops (
-			route_id TEXT,
-			stop_id TEXT,
-
-			PRIMARY KEY (route_id, stop_id),
-			FOREIGN KEY (route_id) REFERENCES routes(id),
-			FOREIGN KEY (stop_id) REFERENCES stops(id)
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	// Create services table
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS services (
-			id TEXT PRIMARY KEY,
-			weekdays INTEGER,
-			start_date TEXT,
-			end_date TEXT
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	// Create service exceptions table
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS service_exceptions (
-			service_id TEXT,
-			date TEXT,
-			type INTEGER,
-
-			PRIMARY KEY (service_id, date),
-			FOREIGN KEY (service_id) REFERENCES services(id)
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	// Create shapes table
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS shapes (
-			id TEXT,
-			sequence INTEGER,
-			coordinate TEXT,
-
-			PRIMARY KEY (id, sequence)
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	// Create stops table
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS stops (
-			id TEXT PRIMARY KEY,
-			code TEXT,
-			name TEXT,
-			parent_id TEXT,
-			location TEXT,
-			location_type INTEGER,
-			supported_modes INTEGER,
-
-			FOREIGN KEY (parent_id) REFERENCES stops(id)
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	// Create trips table
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS trips (
-			id TEXT PRIMARY KEY,
-			route_id TEXT,
-			service_id TEXT,
-			shape_id TEXT,
-			direction INTEGER,
-			headsign TEXT,
-
-			FOREIGN KEY (route_id) REFERENCES routes(id),
-			FOREIGN KEY (service_id) REFERENCES services(id),
-			FOREIGN KEY (shape_id) REFERENCES shapes(id)
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	// Create joining table for trips and stops
-	_, err = tx.Exec(`
-		CREATE TABLE IF NOT EXISTS trip_stops (
-			trip_id TEXT,
-			stop_id TEXT,
-			stop_sequence INTEGER,
-			arrival_time INTEGER,
-			departure_time INTEGER,
-			timepoint INTEGER,
-
-			PRIMARY KEY (trip_id, stop_id),
-			FOREIGN KEY (trip_id) REFERENCES trips(id),
-			FOREIGN KEY (stop_id) REFERENCES stops(id)
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit()
-}
-
-func CreateIndices(db *sql.DB) error {
-	// Create indices for the tables
-	_, err := db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_routes_name ON routes (name);
-		CREATE INDEX IF NOT EXISTS idx_routes_stops_route_id ON routes_stops (route_id);
-		CREATE INDEX IF NOT EXISTS idx_service_exceptions_service_id ON service_exceptions (service_id);
-		CREATE INDEX IF NOT EXISTS idx_shapes_id ON shapes (id);
-		CREATE INDEX IF NOT EXISTS idx_stops_parent_id ON stops (parent_id);
-		CREATE INDEX IF NOT EXISTS idx_trips_route_id ON trips (route_id);
-		CREATE INDEX IF NOT EXISTS idx_trip_stops_trip_id ON trip_stops (trip_id);
-	`)
-	if err != nil {
-		return err
 	}
 
 	return nil
+}
+
+func (db *GTFSDB) GetAgencies() ([]*models.Agency, error) {
+	agencies := make([]*models.Agency, 0)
+	err := db.Agencies.Query(func(txn *column.Txn) error {
+		var err error
+		agencies, err = models.LoadAllAgencies(txn)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return agencies, nil
 }

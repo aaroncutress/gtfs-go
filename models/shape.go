@@ -1,81 +1,88 @@
 package models
 
 import (
-	"database/sql"
 	"encoding/csv"
+	"errors"
 	"io"
-	"sort"
 	"strconv"
+
+	"github.com/kelindar/column"
 )
 
 // Represents the shape of a transit route
 type Shape struct {
 	ID          Key
-	Coordinates []Coordinate
+	Coordinates CoordinateArray
 }
 type ShapeMap map[Key]*Shape
 
-// Encode the Shape struct into a slice of records
-func (s *Shape) Encode() [][]any {
-	records := make([][]any, len(s.Coordinates))
-	for i, coord := range s.Coordinates {
-		records[i] = []any{
-			string(s.ID),
-			i,
-			coord.String(),
-		}
+// Saves the shape to the database
+func (s Shape) Save(row column.Row, coordsPerRow int) error {
+	i := 0
+	for currentRow := 0; currentRow < len(s.Coordinates); currentRow += coordsPerRow {
+		// Get the next set of coordinates
+		endRow := min(currentRow+coordsPerRow, len(s.Coordinates))
+		coords := s.Coordinates[currentRow:endRow]
+
+		// Set the coordinates in the row
+		row.SetRecord("coordinates"+strconv.Itoa(i), coords)
+		i++
 	}
-	return records
+
+	return nil
 }
 
-// Decode a slice of records into a Shape struct
-func DecodeShape(records *sql.Rows) (*Shape, error) {
-	var id, coordStr string
-	var seq int
+// Loads the shape from the database
+func (s *Shape) Load(row column.Row, numRows int) error {
+	key, keyOk := row.Key()
+	// coordinatesAny, coordinatesOk := row.Record("coordinates")
+
+	var coordinatesAnyAll []any
+	for i := range numRows {
+		coordinatesAny, coordinatesOk := row.Record("coordinates" + strconv.Itoa(i))
+		if !coordinatesOk {
+			if i == 0 {
+				return errors.New("missing required fields")
+			}
+			break
+		}
+		coordinatesAnyAll = append(coordinatesAnyAll, coordinatesAny)
+	}
+
+	if !keyOk {
+		return errors.New("missing required fields")
+	}
+
 	coordinates := make([]Coordinate, 0)
-	sequences := make([]int, 0)
-
-	for records.Next() {
-		err := records.Scan(&id, &seq, &coordStr)
-		if err != nil {
-			return nil, err
+	for _, coordinatesAny := range coordinatesAnyAll {
+		coords, ok := coordinatesAny.(*CoordinateArray)
+		if !ok {
+			return errors.New("invalid coordinates format")
 		}
-		coord, err := NewCoordinateFromString(coordStr)
-		if err != nil {
-			return nil, err
-		}
-		coordinates = append(coordinates, coord)
-		sequences = append(sequences, seq)
+		coordinates = append(coordinates, *coords...)
 	}
 
-	if err := records.Err(); err != nil {
-		return nil, err
-	}
+	s.ID = Key(key)
+	s.Coordinates = coordinates
 
-	// Sort coordinates by sequence
-	sort.Slice(coordinates, func(i, j int) bool {
-		return sequences[i] < sequences[j]
-	})
-
-	return &Shape{
-		ID:          Key(id),
-		Coordinates: coordinates,
-	}, nil
+	return nil
 }
 
 // Load shapes from the GTFS shapes.txt file
-func LoadShapes(file io.Reader) (ShapeMap, error) {
+func LoadShapes(file io.Reader) (ShapeMap, int, error) {
 	// Read file using CSV reader
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var currentID Key
-	var currentCoordinates []Coordinate
+	var currentCoordinates CoordinateArray
 
 	shapes := make(ShapeMap)
+	maxShapeLength := 0
+
 	for i, record := range records {
 		if i == 0 {
 			continue // skip header
@@ -85,11 +92,11 @@ func LoadShapes(file io.Reader) (ShapeMap, error) {
 		id := Key(record[0])
 		lat, err := strconv.ParseFloat(record[1], 64)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		lon, err := strconv.ParseFloat(record[2], 64)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		if id != currentID {
@@ -97,6 +104,9 @@ func LoadShapes(file io.Reader) (ShapeMap, error) {
 				shapes[currentID] = &Shape{
 					ID:          currentID,
 					Coordinates: currentCoordinates,
+				}
+				if len(currentCoordinates) > maxShapeLength {
+					maxShapeLength = len(currentCoordinates)
 				}
 			}
 			currentID = id
@@ -115,7 +125,10 @@ func LoadShapes(file io.Reader) (ShapeMap, error) {
 			ID:          currentID,
 			Coordinates: currentCoordinates,
 		}
+		if len(currentCoordinates) > maxShapeLength {
+			maxShapeLength = len(currentCoordinates)
+		}
 	}
 
-	return shapes, nil
+	return shapes, maxShapeLength, nil
 }

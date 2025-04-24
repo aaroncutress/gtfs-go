@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/aaroncutress/gtfs-go/models"
+	"github.com/charmbracelet/log"
+	"github.com/kelindar/column"
 )
 
 // Checks if the given trip is running today
@@ -54,4 +56,74 @@ func (g *GTFS) IsRunningToday(tripID models.Key) (bool, error) {
 
 	// All is well
 	return true, nil
+}
+
+// Returns all trips that are currently running
+func (g *GTFS) GetAllCurrentTrips() ([]*models.Trip, error) {
+	// Get all trips from the database
+	log.Info("Fetching all trips from the database")
+
+	trips := make([]*models.Trip, 0)
+	err := g.db.Trips.Query(func(txn *column.Txn) error {
+		var err error
+		trips, err = models.LoadAllTrips(txn)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	log.Info("Fetched and decoded trips")
+
+	now := time.Now()
+	routeTzMap := make(map[models.Key]*time.Location)
+
+	currentTrips := make([]*models.Trip, 0)
+
+	log.Info("Checking each trip for current status")
+
+	for _, trip := range trips {
+		// Check if the trip is running today
+		isRunning, err := g.IsRunningToday(trip.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !isRunning {
+			continue
+		}
+
+		// Get the current time in the trip's timezone
+		tz, ok := routeTzMap[trip.RouteID]
+		if !ok {
+			agency, err := g.GetAgencyByRouteID(trip.RouteID)
+			if err != nil {
+				return nil, err
+			}
+			tz, err = time.LoadLocation(agency.Timezone)
+			if err != nil {
+				return nil, err
+			}
+			routeTzMap[trip.RouteID] = tz
+		}
+
+		nowTz := now.In(tz)
+		nowTzTruncated := nowTz.Truncate(24 * time.Hour)
+
+		// Get the trip start and end times
+		tripStart := nowTzTruncated.Add(time.Duration(trip.StartTime()) * time.Second)
+		if models.IsNextDay(trip.StartTime()) {
+			tripStart = tripStart.Add(24 * time.Hour)
+		}
+		tripEnd := nowTzTruncated.Add(time.Duration(trip.EndTime()) * time.Second)
+		if models.IsNextDay(trip.EndTime()) {
+			tripEnd = tripEnd.Add(24 * time.Hour)
+		}
+
+		// Check if the trip is currently running
+		if tripStart.Before(nowTz) && tripEnd.After(nowTz) {
+			currentTrips = append(currentTrips, trip)
+		}
+	}
+
+	return currentTrips, nil
 }

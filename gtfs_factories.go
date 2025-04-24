@@ -3,7 +3,6 @@ package gtfs
 import (
 	"archive/zip"
 	"bytes"
-	"database/sql"
 	"errors"
 	"io"
 	"os"
@@ -17,10 +16,12 @@ import (
 	"resty.dev/v3"
 )
 
+const CurrentVersion = 1
+
 // Temporary struct to hold the shape ID and stop IDs for each route
 type routeShapeAndStops struct {
 	shapeID models.Key
-	stopIDs []models.Key
+	stopIDs models.KeyArray
 }
 type routeShapeAndStopsMap map[models.Key]routeShapeAndStops
 
@@ -36,8 +37,8 @@ func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error
 
 	shapeAndStops := make(routeShapeAndStopsMap)
 	for routeID, trips := range routeTrips {
-		inboundShapesCounts := make(map[models.Key][]models.Key)
-		outboundShapesCounts := make(map[models.Key][]models.Key)
+		inboundShapesCounts := make(map[models.Key]models.KeyArray)
+		outboundShapesCounts := make(map[models.Key]models.KeyArray)
 
 		for _, trip := range trips {
 			if trip.Direction == models.InboundTripDirection {
@@ -78,7 +79,7 @@ func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error
 			continue
 		}
 
-		stopIDs := make([]models.Key, 0)
+		stopIDs := make(models.KeyArray, 0)
 
 		if mostCommonInboundShapeID != "" {
 			for _, tripID := range inboundShapesCounts[mostCommonInboundShapeID] {
@@ -113,27 +114,44 @@ func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error
 	return shapeAndStops, nil
 }
 
+// Load GTFS data from a local database file
+func (g *GTFS) FromDB(dbFile string) error {
+	log.Infof("Loading GTFS data from %s", dbFile)
+	db := &internal.GTFSDB{}
+	db.Initialize()
+	version, err := db.Load(dbFile)
+
+	if err != nil {
+		return err
+	}
+	g.db = db
+	g.filePath = dbFile
+	g.Version = version
+
+	return nil
+}
+
 // Construct a new GTFS database from a hosted GTFS URL
-func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
+func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	// Delete the existing database file if it exists
 	if _, err := os.Stat(dbFile); err == nil {
 		err = os.Remove(dbFile)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	} else if !os.IsNotExist(err) {
-		return nil, err
+		return err
 	}
 
 	// Create the database file
 	dirPath := filepath.Dir(dbFile)
 	err := os.MkdirAll(dirPath, 0755)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	_, err = os.Create(dbFile)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Download the GTFS data from the URL
@@ -144,10 +162,10 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 
 	resp, err := client.R().Get(gtfsURL)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if resp.IsError() {
-		return nil, errors.New("failed to download GTFS data: " + resp.Status())
+		return errors.New("failed to download GTFS data: " + resp.Status())
 	}
 
 	// Read the zip file from the response body
@@ -156,11 +174,11 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 	zipBytes, err := io.ReadAll(resp.Body)
 	defer resp.Body.Close()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	zipReader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Open all files in the zip archive
@@ -172,7 +190,7 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 	for _, file := range zipReader.File {
 		f, err := file.Open()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		defer f.Close()
 
@@ -189,7 +207,7 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 	// Check for required files
 	for _, file := range requiredFiles {
 		if _, ok := readers[file]; !ok {
-			return nil, errors.New("missing required GTFS file: " + file)
+			return errors.New("missing required GTFS file: " + file)
 		}
 	}
 
@@ -200,6 +218,8 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 	var shapes models.ShapeMap
 	var stops models.StopMap
 	var trips models.TripMap
+
+	var maxShapeLength int
 
 	var wg sync.WaitGroup
 	errChannel := make(chan error, 1)
@@ -225,6 +245,8 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 				stops = v
 			case models.TripMap:
 				trips = v
+			case int:
+				maxShapeLength = v
 			}
 		}
 	}()
@@ -312,7 +334,7 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 			return
 		}
 		var loadErr error
-		shapes, loadErr = models.LoadShapes(reader)
+		shapes, maxShapeLength, loadErr = models.LoadShapes(reader)
 		log.Infof("Loaded %d shapes", len(shapes))
 		if loadErr != nil {
 			select {
@@ -321,7 +343,9 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 			}
 			return
 		}
+
 		completion <- shapes
+		completion <- maxShapeLength
 	}()
 
 	// Load stops
@@ -365,7 +389,7 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 	select {
 	case err := <-errChannel:
 		if err != nil {
-			return nil, err
+			return err
 		}
 	default:
 	}
@@ -377,7 +401,7 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 
 	shapeAndStops, err := getRouteShapeAndStops(trips)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for routeID, shapeAndStopsData := range shapeAndStops {
 		route, ok := routes[routeID]
@@ -389,53 +413,29 @@ func NewGTFSFromURL(gtfsURL, dbFile string) (*GTFS, error) {
 		routes[routeID] = route
 	}
 
-	// Create a new SQLite database
-	log.Infof("Creating SQLite database at %s", dbFile)
+	// Create the GTFS database
+	log.Infof("Creating GTFS database")
+	db := &internal.GTFSDB{}
+	db.MaxShapeLength = maxShapeLength
+	db.Initialize()
 
-	db, err := sql.Open("sqlite", dbFile)
+	// Populate the database with the loaded data
+	log.Infof("Populating GTFS database")
+	err = db.Populate(agencies, routes, services, serviceExceptions, shapes, stops, trips)
 	if err != nil {
-		return nil, err
-	}
-
-	err = internal.InitializeDB(db)
-	if err != nil {
-		return nil, err
-	}
-	err = internal.PopulateDB(db, agencies, routes, services, serviceExceptions, shapes, stops, trips)
-	if err != nil {
-		return nil, err
-	}
-	err = internal.CreateIndices(db)
-	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &GTFS{
-		db: db,
-	}, nil
-}
+	// Save the database to the file
+	g.db = db
+	g.filePath = dbFile
+	g.Version = CurrentVersion
 
-// Loads GTFS data from an existing SQLite database file
-func LoadGTFSFromDB(dbFile string) (*GTFS, error) {
-	// Open the SQLite database file
-	log.Infof("Opening SQLite database at %s", dbFile)
-	db, err := sql.Open("sqlite", dbFile)
+	log.Infof("Saving GTFS database to %s", dbFile)
+	err = g.Save()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// Check if the database is empty
-	log.Infof("Checking for database content at %s", dbFile)
-	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").Scan(&count)
-	if err != nil {
-		return nil, err
-	}
-	if count == 0 {
-		return nil, errors.New("database is empty")
-	}
-
-	return &GTFS{
-		db: db,
-	}, nil
+	return nil
 }

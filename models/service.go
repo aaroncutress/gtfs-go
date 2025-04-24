@@ -1,11 +1,13 @@
 package models
 
 import (
-	"database/sql"
 	"encoding/csv"
+	"errors"
 	"io"
 	"strconv"
 	"time"
+
+	"github.com/kelindar/column"
 )
 
 // Flag for each day of the week
@@ -30,41 +32,30 @@ type Service struct {
 }
 type ServiceMap map[Key]*Service
 
-// Encodes the Service struct into a record
-func (s *Service) Encode() []any {
-	return []any{
-		string(s.ID),
-		int(s.Weekdays),
-		s.StartDate.Format("20060102"),
-		s.EndDate.Format("20060102"),
-	}
+// Saves the service to the database
+func (s Service) Save(row column.Row) error {
+	row.SetUint("weekdays", uint(s.Weekdays))
+	row.SetString("start_date", s.StartDate.Format("20060102"))
+	row.SetString("end_date", s.EndDate.Format("20060102"))
+	return nil
 }
 
-// Decodes a record into a Service struct
-func DecodeService(record *sql.Row) (*Service, error) {
-	var id, startDateStr, endDateStr string
-	var weekdaysInt int
-	err := record.Scan(&id, &weekdaysInt, &startDateStr, &endDateStr)
-	if err != nil {
-		return nil, err
+// Loads the service from the database
+func (s *Service) Load(row column.Row) error {
+	key, keyOk := row.Key()
+	weekdays, weekdaysOk := row.Uint("weekdays")
+	startDate, startDateOk := row.String("start_date")
+	endDate, endDateOk := row.String("end_date")
+
+	if !keyOk || !weekdaysOk || !startDateOk || !endDateOk {
+		return errors.New("missing required fields")
 	}
 
-	startDate, err := time.Parse("20060102", startDateStr)
-	if err != nil {
-		return nil, err
-	}
-
-	endDate, err := time.Parse("20060102", endDateStr)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Service{
-		ID:        Key(id),
-		Weekdays:  WeekdayFlag(weekdaysInt),
-		StartDate: startDate,
-		EndDate:   endDate,
-	}, nil
+	s.ID = Key(key)
+	s.Weekdays = WeekdayFlag(weekdays)
+	s.StartDate, _ = time.Parse("20060102", startDate)
+	s.EndDate, _ = time.Parse("20060102", endDate)
+	return nil
 }
 
 func parseWeekdayFlag(day string, flag WeekdayFlag) WeekdayFlag {

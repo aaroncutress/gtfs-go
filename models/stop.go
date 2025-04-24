@@ -1,11 +1,13 @@
 package models
 
 import (
-	"database/sql"
 	"encoding/csv"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/kelindar/column"
 )
 
 type LocationType uint8
@@ -40,42 +42,45 @@ type Stop struct {
 }
 type StopMap map[Key]*Stop
 
-// Encode the Stop struct into a record
-func (s *Stop) Encode() []any {
-	return []any{
-		string(s.ID),
-		string(s.ParentID),
-		s.Code,
-		s.Name,
-		s.Location.String(),
-		int(s.LocationType),
-		int(s.SupportedModes),
-	}
+// Saves the stop to the database
+func (s Stop) Save(r column.Row) error {
+	r.SetString("code", s.Code)
+	r.SetString("name", s.Name)
+	r.SetString("parent_id", string(s.ParentID))
+	r.SetString("location", s.Location.String())
+	r.SetUint("location_type", uint(s.LocationType))
+	r.SetUint("supported_modes", uint(s.SupportedModes))
+	return nil
 }
 
-// Decode a record into a Stop struct
-func DecodeStop(record *sql.Row) (*Stop, error) {
-	var id, code, name, parentID, locationStr string
-	var locationTypeInt, supportedModesInt int
-	err := record.Scan(&id, &parentID, &code, &name, &locationStr, &locationTypeInt, &supportedModesInt)
-	if err != nil {
-		return nil, err
+// Loads the stop from the database
+func (s *Stop) Load(r column.Row) error {
+	key, keyOk := r.Key()
+	code, codeOk := r.String("code")
+	name, nameOk := r.String("name")
+	parentID, parentIDOk := r.String("parent_id")
+	locationStr, locationStrOk := r.String("location")
+	locationTypeInt, locationTypeIntOk := r.Uint("location_type")
+	supportedModesInt, supportedModesIntOk := r.Uint("supported_modes")
+
+	if !keyOk || !codeOk || !nameOk || !parentIDOk || !locationStrOk || !locationTypeIntOk || !supportedModesIntOk {
+		return errors.New("missing required fields")
 	}
 
 	location, err := NewCoordinateFromString(locationStr)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &Stop{
-		ID:             Key(id),
-		Code:           code,
-		Name:           name,
-		ParentID:       Key(parentID),
-		Location:       location,
-		LocationType:   LocationType(locationTypeInt),
-		SupportedModes: ModeFlag(supportedModesInt),
-	}, nil
+	s.ID = Key(key)
+	s.Code = code
+	s.Name = name
+	s.ParentID = Key(parentID)
+	s.Location = location
+	s.LocationType = LocationType(locationTypeInt)
+	s.SupportedModes = ModeFlag(supportedModesInt)
+
+	return nil
 }
 
 func parseModeFlag(mode string) ModeFlag {

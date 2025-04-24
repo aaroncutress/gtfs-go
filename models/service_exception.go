@@ -1,11 +1,12 @@
 package models
 
 import (
-	"database/sql"
 	"encoding/csv"
 	"errors"
 	"io"
 	"time"
+
+	"github.com/kelindar/column"
 )
 
 // Enum for the types of service exception
@@ -24,45 +25,28 @@ type ServiceException struct {
 }
 type ServiceExceptionMap map[Key]*ServiceException
 
-// Encode the ServiceException struct into a record
-func (se *ServiceException) Encode() []any {
-	return []any{
-		string(se.ServiceID),
-		se.Date.Format("20060102"),
-		int(se.Type),
-	}
+// Saves the service exception to the database
+func (se ServiceException) Save(row column.Row) error {
+	row.SetString("service_id", string(se.ServiceID))
+	row.SetString("date", se.Date.Format("20060102"))
+	row.SetUint("type", uint(se.Type))
+	return nil
 }
 
-// Decode records into ServiceException structs
-func DecodeServiceExceptions(record *sql.Rows) ([]*ServiceException, error) {
-	serviceExceptions := make([]*ServiceException, 0)
+// Loads the service exception from the database
+func (se *ServiceException) Load(row column.Row) error {
+	key, keyOk := row.Key()
+	date, dateOk := row.String("date")
+	typeInt, typeIntOk := row.Uint("type")
 
-	for record.Next() {
-		var serviceID, dateStr string
-		var exceptionTypeInt int
-
-		err := record.Scan(&serviceID, &dateStr, &exceptionTypeInt)
-		if err != nil {
-			return nil, err
-		}
-
-		date, err := time.Parse("20060102", dateStr)
-		if err != nil {
-			return nil, err
-		}
-
-		serviceExceptions = append(serviceExceptions, &ServiceException{
-			ServiceID: Key(serviceID),
-			Date:      date,
-			Type:      ExceptionType(exceptionTypeInt),
-		})
+	if !keyOk || !dateOk || !typeIntOk {
+		return errors.New("missing required fields")
 	}
 
-	if err := record.Err(); err != nil {
-		return nil, err
-	}
-
-	return serviceExceptions, nil
+	se.ServiceID = Key(key)
+	se.Date, _ = time.Parse("20060102", date)
+	se.Type = ExceptionType(typeInt)
+	return nil
 }
 
 // Load service exceptions from the GTFS calendar_dates.txt file
