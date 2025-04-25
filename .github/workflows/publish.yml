@@ -97,10 +97,6 @@ jobs:
                     exit 1
                   fi
 
-                  # Add a small delay to allow the proxy potentially sync (optional, adjust as needed)
-                  echo "Waiting 15 seconds before attempting to notify proxy..."
-                  sleep 15
-
                   echo "Attempting to notify proxy about module $MODULE_PATH version $VERSION ..."
                   # Run the go list command with the proxy set.
                   # Use -x flag for verbose output from go command for debugging if needed.
