@@ -24,8 +24,6 @@ const (
 	ExactTripTimepoint
 )
 
-const secondsInDay = 60 * 60 * 24
-
 // Represents a stop in a trip
 type TripStop struct {
 	StopID        Key           `json:"stop_id"`
@@ -227,11 +225,6 @@ func (t *Trip) EndTime() uint {
 		return 0
 	}
 	return t.Stops[len(t.Stops)-1].DepartureTime
-}
-
-// Check if a time crosses into the next day
-func IsNextDay(time uint) bool {
-	return time > secondsInDay
 }
 
 // Parse time in HH:MM:SS format into seconds since midnight

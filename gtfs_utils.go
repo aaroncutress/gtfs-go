@@ -7,13 +7,15 @@ import (
 	"github.com/charmbracelet/log"
 )
 
+const secondsInDay = 24 * 60 * 60
+
 // Check if a given weekday is present in the flags
 func hasDay(flags models.WeekdayFlag, day time.Weekday) bool {
 	if day < time.Sunday || day > time.Saturday {
 		return false
 	}
 
-	bitPos := (int(day) - 1 + 7) % 7
+	bitPos := (int(day) + 6) % 7
 	dayFlag := models.WeekdayFlag(1 << bitPos)
 	return (flags & dayFlag) != 0
 }
@@ -32,6 +34,7 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 	log.Infof("Fetched and decoded %d trips", len(trips))
 
 	truncated := t.Truncate(24 * time.Hour)
+	nextT := t.Add(24 * time.Hour)
 	weekday := truncated.Weekday()
 
 	currentTrips := make(models.TripArray, len(trips))
@@ -43,16 +46,18 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 	for _, trip := range trips {
 		// Get the trip start and end times
 		tripStart := truncated.Add(time.Duration(trip.StartTime()) * time.Second)
-		if models.IsNextDay(trip.StartTime()) {
-			tripStart = tripStart.Add(24 * time.Hour)
-		}
-		tripEnd := truncated.Add(time.Duration(trip.EndTime()) * time.Second)
-		if models.IsNextDay(trip.EndTime()) {
-			tripEnd = tripEnd.Add(24 * time.Hour)
+		endSeconds := trip.EndTime()
+		tripEnd := truncated.Add(time.Duration(endSeconds) * time.Second)
+
+		// Adjust for midnight crossing
+		tripCrossesMidnight := endSeconds > secondsInDay
+		intersectsOnNextDay := false
+		if tripCrossesMidnight {
+			intersectsOnNextDay = nextT.After(tripStart) && nextT.Before(tripEnd)
 		}
 
 		// Check if the trip is running
-		if tripStart.After(t) || tripEnd.Before(t) {
+		if (tripStart.After(t) || tripEnd.Before(t)) && !intersectsOnNextDay {
 			continue
 		}
 
