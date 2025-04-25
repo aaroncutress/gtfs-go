@@ -23,7 +23,7 @@ func hasDay(flags models.WeekdayFlag, day time.Weekday) bool {
 // Returns all trips that are currently running at the given time
 func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 	// Get all trips from the database
-	log.Info("Fetching all trips from the database")
+	log.Debug("Fetching all trips from the database")
 
 	var trips models.TripArray
 	err := g.db.Trips.Query(trips.Load)
@@ -31,7 +31,7 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 		return nil, err
 	}
 
-	log.Infof("Fetched and decoded %d trips", len(trips))
+	log.Debugf("Fetched and decoded %d trips", len(trips))
 
 	truncated := t.Truncate(24 * time.Hour)
 	nextT := t.Add(24 * time.Hour)
@@ -40,7 +40,7 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 	currentTrips := make(models.TripArray, len(trips))
 	total := 0
 
-	log.Info("Checking each trip for current status")
+	log.Debug("Checking each trip for current status")
 
 	runningCache := make(map[models.Key]bool) // service id -> running
 	for _, trip := range trips {

@@ -159,7 +159,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	}
 
 	// Read the zip file from the response body
-	log.Infof("Reading GTFS data from %s", gtfsURL)
+	log.Debugf("Reading GTFS data from %s", gtfsURL)
 
 	zipBytes, err := io.ReadAll(resp.Body)
 	defer resp.Body.Close()
@@ -172,7 +172,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	}
 
 	// Open all files in the zip archive
-	log.Infof("Opening GTFS files from %s", gtfsURL)
+	log.Debugf("Opening GTFS files from %s", gtfsURL)
 
 	readers := make(map[string]io.Reader)
 	openFiles := []io.ReadCloser{}
@@ -215,8 +215,8 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	errChannel := make(chan error, 1)
 	completion := make(chan any)
 
-	// Create functions to load each GTFS file concurrently
-	log.Infof("Loading GTFS data from %s", gtfsURL)
+	// Create functions to parse each GTFS file concurrently
+	log.Debugf("Parsing GTFS data from %s", gtfsURL)
 
 	go func() {
 		for result := range completion {
@@ -247,7 +247,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		defer wg.Done()
 		var loadErr error // Declare err within this scope
 		agencies, loadErr = models.ParseAgencies(readers["agency.txt"])
-		log.Infof("Loaded %d agencies", len(agencies))
+		log.Debugf("Parsed %d agencies", len(agencies))
 		if loadErr != nil {
 			select { // Non-blocking send to avoid deadlock if errChan is full
 			case errChannel <- loadErr:
@@ -264,7 +264,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		defer wg.Done()
 		var loadErr error
 		routes, loadErr = models.ParseRoutes(readers["routes.txt"])
-		log.Infof("Loaded %d routes", len(routes))
+		log.Debugf("Parsed %d routes", len(routes))
 		if loadErr != nil {
 			select {
 			case errChannel <- loadErr:
@@ -281,7 +281,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		defer wg.Done()
 		var loadErr error
 		services, loadErr = models.ParseServices(readers["calendar.txt"])
-		log.Infof("Loaded %d services", len(services))
+		log.Debugf("Parsed %d services", len(services))
 		if loadErr != nil {
 			select {
 			case errChannel <- loadErr:
@@ -299,11 +299,12 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		reader, ok := readers["calendar_dates.txt"]
 		if !ok {
 			// File not found, just exit the goroutine. wg.Done() handles the counter.
+			log.Debugf("calendar_dates.txt not found, skipping")
 			return
 		}
 		var loadErr error
 		serviceExceptions, loadErr = models.ParseServiceExceptions(reader)
-		log.Infof("Loaded %d service exceptions", len(serviceExceptions))
+		log.Debugf("Parsed %d service exceptions", len(serviceExceptions))
 		if loadErr != nil {
 			select {
 			case errChannel <- loadErr:
@@ -321,11 +322,12 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		reader, ok := readers["shapes.txt"]
 		if !ok {
 			// File not found, just exit the goroutine. wg.Done() handles the counter.
+			log.Debugf("shapes.txt not found, skipping")
 			return
 		}
 		var loadErr error
 		shapes, maxShapeLength, loadErr = models.ParseShapes(reader)
-		log.Infof("Loaded %d shapes", len(shapes))
+		log.Debugf("Parsed %d shapes", len(shapes))
 		if loadErr != nil {
 			select {
 			case errChannel <- loadErr:
@@ -344,7 +346,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		defer wg.Done()
 		var loadErr error
 		stops, loadErr = models.ParseStops(readers["stops.txt"])
-		log.Infof("Loaded %d stops", len(stops))
+		log.Debugf("Parsed %d stops", len(stops))
 		if loadErr != nil {
 			select {
 			case errChannel <- loadErr:
@@ -361,7 +363,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		defer wg.Done()
 		var loadErr error
 		trips, loadErr = models.ParseTrips(readers["trips.txt"], readers["stop_times.txt"])
-		log.Infof("Loaded %d trips", len(trips))
+		log.Debugf("Parsed %d trips", len(trips))
 		if loadErr != nil {
 			select {
 			case errChannel <- loadErr:
@@ -384,10 +386,10 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	default:
 	}
 
-	log.Infof("Finished loading GTFS data from %s", gtfsURL)
+	log.Debugf("Finished loading GTFS data from %s", gtfsURL)
 
 	// Get the most common shape ID and stop IDs for each route
-	log.Infof("Getting route shape and stops")
+	log.Debugf("Getting route shape and stops")
 
 	shapeAndStops, err := getRouteShapeAndStops(trips)
 	if err != nil {
@@ -404,13 +406,13 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	}
 
 	// Create the GTFS database
-	log.Infof("Creating GTFS database")
+	log.Debugf("Creating GTFS database")
 	db := &internal.GTFSDB{}
 	db.MaxShapeLength = maxShapeLength
 	db.Initialize()
 
 	// Populate the database with the loaded data
-	log.Infof("Populating GTFS database")
+	log.Debugf("Populating GTFS database")
 	err = db.Populate(agencies, routes, services, serviceExceptions, shapes, stops, trips)
 	if err != nil {
 		return err
@@ -421,7 +423,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	g.filePath = dbFile
 	g.Version = CurrentVersion
 
-	log.Infof("Saving GTFS database to %s", dbFile)
+	log.Debugf("Saving GTFS database to %s", dbFile)
 	err = g.Save()
 	if err != nil {
 		return err

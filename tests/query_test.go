@@ -2,29 +2,129 @@ package tests
 
 import (
 	"testing"
-
-	"github.com/aaroncutress/gtfs-go"
+	"time"
 )
 
-// Tests getting all current trips from the GTFS database
-func TestGetCurrentTrips(t *testing.T) {
-	// Create a GTFS instance
-	g := &gtfs.GTFS{}
-	err := g.FromDB("test.db")
+func TestGetAgencyByID(t *testing.T) {
+	// Get the agency by ID
+	agency, err := g.GetAgencyByID(agencyID)
 	if err != nil {
-		t.Fatalf("Failed to load GTFS database: %v", err)
+		t.Fatalf("Failed to get agency by ID: %v", err)
 	}
 
-	// Get all current trips
-	trips, err := g.GetAllCurrentTrips()
-	if err != nil {
-		t.Fatalf("Failed to get current trips: %v", err)
+	// Check if the agency ID matches the expected value
+	if agency.ID != agencyID {
+		t.Fatalf("Expected agency ID %s, got %s", agencyID, agency.ID)
 	}
 
-	// Check if the number of trips is greater than 0
+	t.Logf("Agency Name: %s", agency.Name)
+}
+
+func TestGetAgencyByRouteID(t *testing.T) {
+	// Get the agency by route ID
+	agency, err := g.GetAgencyByRouteID(routeID)
+	if err != nil {
+		t.Fatalf("Failed to get agency by route ID: %v", err)
+	}
+
+	// Check if the agency ID matches the expected value
+	if agency.ID != agencyID {
+		t.Fatalf("Expected agency ID %s, got %s", agencyID, agency.ID)
+	}
+
+	t.Logf("Agency Name: %s", agency.Name)
+}
+
+func TestGetRouteByID(t *testing.T) {
+	// Get the route by ID
+	route, err := g.GetRouteByID(routeID)
+	if err != nil {
+		t.Fatalf("Failed to get route by ID: %v", err)
+	}
+
+	// Check if the route ID matches the expected value
+	if route.ID != routeID {
+		t.Fatalf("Expected route ID %s, got %s", routeID, route.ID)
+	}
+
+	t.Logf("Route Name: %s", route.Name)
+}
+
+func TestGetStopByID(t *testing.T) {
+	// Get the stop by ID
+	stop, err := g.GetStopByID(stopID)
+	if err != nil {
+		t.Fatalf("Failed to get stop by ID: %v", err)
+	}
+
+	// Check if the stop ID matches the expected value
+	if stop.ID != stopID {
+		t.Fatalf("Expected stop ID %s, got %s", stopID, stop.ID)
+	}
+
+	t.Logf("Stop Name: %s", stop.Name)
+}
+
+func TestGetTripByID(t *testing.T) {
+	// Get the trip by ID
+	trip, err := g.GetTripByID(tripID)
+	if err != nil {
+		t.Fatalf("Failed to get trip by ID: %v", err)
+	}
+
+	// Check if the trip ID matches the expected value
+	if trip.ID != tripID {
+		t.Fatalf("Expected trip ID %s, got %s", tripID, trip.ID)
+	}
+
+	t.Logf("Trip Headsign: %s", trip.Headsign)
+}
+
+func TestGetTripsByRouteID(t *testing.T) {
+	// Get the trips by route ID
+	trips, err := g.GetTripsByRouteID(routeID)
+	if err != nil {
+		t.Fatalf("Failed to get trips by route ID: %v", err)
+	}
+
+	// Check if the trips are not empty
 	if len(trips) == 0 {
-		t.Fatal("No current trips found")
+		t.Fatal("Expected non-empty trips list")
 	}
 
-	t.Logf("Number of current trips: %d", len(trips))
+	t.Logf("Number of trips: %d", len(trips))
+}
+
+func TestGetServiceByID(t *testing.T) {
+	// Get the service by ID
+	service, err := g.GetServiceByID(serviceID)
+	if err != nil {
+		t.Fatalf("Failed to get service by ID: %v", err)
+	}
+
+	// Check if the service ID matches the expected value
+	if service.ID != serviceID {
+		t.Fatalf("Expected service ID %s, got %s", serviceID, service.ID)
+	}
+
+	t.Logf("Service ID: %s", service.ID)
+}
+
+func TestGetServiceException(t *testing.T) {
+	// Get the service exceptions for the given date
+	serviceDateParsed, err := time.Parse("2006-01-02", serviceDate)
+	if err != nil {
+		t.Fatalf("Failed to parse service date: %v", err)
+	}
+
+	exception, err := g.GetServiceException(serviceID, serviceDateParsed)
+	if err != nil {
+		t.Fatalf("Failed to get service exceptions: %v", err)
+	}
+
+	// Check if the exception ID matches the expected value
+	if exception.ServiceID != serviceID {
+		t.Fatalf("Expected service ID %s, got %s", serviceID, exception.ServiceID)
+	}
+	t.Logf("Service ID: %s", exception.ServiceID)
 }

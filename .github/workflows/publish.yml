@@ -51,7 +51,7 @@ jobs:
               with:
                   # Specify the Go version you want to use
                   # It's good practice to match this with your go.mod file's go directive
-                  go-version: "1.21" # Or use 'stable' or a specific version like '1.22.x'
+                  go-version: "1.24" # Or use 'stable' or a specific version like '1.22.x'
                   # Cache Go modules to speed up subsequent runs
                   cache: true
 
@@ -63,9 +63,9 @@ jobs:
 
             # Step 5: Run tests (Optional but highly recommended)
             # Ensure your tests pass at the tagged commit before it's considered "published"
-            # - name: Run tests
-            #   if: steps.check_branch.outputs.on_main == 'true'
-            #   run: go test ./...
+            - name: Run tests
+              if: steps.check_branch.outputs.on_main == 'true'
+              run: go test ./...
 
             # Step 6: Build (Optional)
             # You might want to build your main package(s) as an additional check
