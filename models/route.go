@@ -35,8 +35,9 @@ type Route struct {
 	Stops    KeyArray
 }
 type RouteMap map[Key]*Route
+type RouteArray []*Route
 
-// Saves the route to the database
+// Saves a route to the database
 func (r Route) Save(row column.Row) error {
 	row.SetString("agency_id", string(r.AgencyID))
 	row.SetString("name", r.Name)
@@ -48,7 +49,7 @@ func (r Route) Save(row column.Row) error {
 	return nil
 }
 
-// Loads the route from the database
+// Loads a route from the database
 func (r *Route) Load(row column.Row) error {
 	key, keyOk := row.Key()
 	agencyID, agencyIDOk := row.String("agency_id")
@@ -67,19 +68,80 @@ func (r *Route) Load(row column.Row) error {
 		return errors.New("invalid stops format")
 	}
 
-	r.ID = Key(key)
-	r.AgencyID = Key(agencyID)
-	r.Name = name
-	r.Type = RouteType(typeInt)
-	r.Colour = colour
-	r.ShapeID = Key(shapeID)
-	r.Stops = *stops
+	*r = Route{
+		ID:       Key(key),
+		AgencyID: Key(agencyID),
+		Name:     name,
+		Type:     RouteType(typeInt),
+		Colour:   colour,
+		ShapeID:  Key(shapeID),
+		Stops:    *stops,
+	}
 
 	return nil
 }
 
-// Load routes from the GTFS routes.txt file
-func LoadRoutes(file io.Reader) (RouteMap, error) {
+// Loads all routes from the database transaction
+func (ra *RouteArray) Load(txn *column.Txn) error {
+	idCol := txn.Key()
+	agencyIDCol := txn.String("agency_id")
+	nameCol := txn.String("name")
+	typeCol := txn.Uint("type")
+	colourCol := txn.String("colour")
+	shapeIDCol := txn.String("shape_id")
+	stopsCol := txn.Record("stops")
+
+	count := txn.Count()
+	if count == 0 {
+		return nil
+	}
+	*ra = make(RouteArray, count)
+
+	var e error
+	i := 0
+	err := txn.Range(func(idx uint32) {
+		id, idOk := idCol.Get()
+		agencyID, agencyIDOk := agencyIDCol.Get()
+		name, nameOk := nameCol.Get()
+		typeInt, typeIntOk := typeCol.Get()
+		colour, colourOk := colourCol.Get()
+		shapeID, shapeIDOk := shapeIDCol.Get()
+		stopsAny, stopsOk := stopsCol.Get()
+
+		if !idOk || !agencyIDOk || !nameOk || !typeIntOk || !colourOk || !shapeIDOk || !stopsOk {
+			e = errors.New("missing required fields")
+			return
+		}
+
+		stops, ok := stopsAny.(*KeyArray)
+		if !ok {
+			e = errors.New("invalid stops format")
+			return
+		}
+
+		(*ra)[i] = &Route{
+			ID:       Key(id),
+			AgencyID: Key(agencyID),
+			Name:     name,
+			Type:     RouteType(typeInt),
+			Colour:   colour,
+			ShapeID:  Key(shapeID),
+			Stops:    *stops,
+		}
+		i++
+	})
+	if err != nil {
+		return err
+	}
+	if e != nil {
+		return e
+	}
+
+	return nil
+}
+
+// Load and parse routes from the GTFS routes.txt file
+func ParseRoutes(file io.Reader) (RouteMap, error) {
 	// Read file using CSV reader
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()

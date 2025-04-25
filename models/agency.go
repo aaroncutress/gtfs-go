@@ -10,80 +10,82 @@ import (
 
 // Represents an agency that provides transit services
 type Agency struct {
-	ID       Key
-	Name     string
-	URL      string
-	Timezone string
+	ID   Key
+	Name string
+	URL  string
 }
+type AgencyArray []*Agency
 type AgencyMap map[Key]*Agency
 
-// Saves the agency to the database
+// Saves an agency to the database
 func (a Agency) Save(r column.Row) error {
 	r.SetString("name", a.Name)
 	r.SetString("url", a.URL)
-	r.SetString("timezone", a.Timezone)
 	return nil
 }
 
-// Loads the agency from the database
+// Loads an agency from the database
 func (a *Agency) Load(r column.Row) error {
 	key, keyOk := r.Key()
 	name, nameOk := r.String("name")
 	url, urlOk := r.String("url")
-	timezone, timezoneOk := r.String("timezone")
 
-	if !keyOk || !nameOk || !urlOk || !timezoneOk {
+	if !keyOk || !nameOk || !urlOk {
 		return errors.New("missing required fields")
 	}
 
-	a.ID = Key(key)
-	a.Name = name
-	a.URL = url
-	a.Timezone = timezone
+	*a = Agency{
+		ID:   Key(key),
+		Name: name,
+		URL:  url,
+	}
 	return nil
 }
 
-// LoadAllAgencies loads all agencies from the database
-func LoadAllAgencies(txn *column.Txn) ([]*Agency, error) {
-	var agencies []*Agency
-
+// Loads all agencies from the database transaction
+func (aa *AgencyArray) Load(txn *column.Txn) error {
 	idCol := txn.Key()
 	nameCol := txn.String("name")
 	urlCol := txn.String("url")
-	timezoneCol := txn.String("timezone")
+
+	count := txn.Count()
+	if count == 0 {
+		return nil
+	}
+	*aa = make(AgencyArray, count)
 
 	var e error
-	err := txn.Range(func(i uint32) {
+	i := 0
+	err := txn.Range(func(idx uint32) {
 		id, idOk := idCol.Get()
 		name, nameOk := nameCol.Get()
 		url, urlOk := urlCol.Get()
-		timezone, timezoneOk := timezoneCol.Get()
 
-		if !idOk || !nameOk || !urlOk || !timezoneOk {
+		if !idOk || !nameOk || !urlOk {
 			e = errors.New("missing required fields")
 			return
 		}
 
-		agencies = append(agencies, &Agency{
-			ID:       Key(id),
-			Name:     name,
-			URL:      url,
-			Timezone: timezone,
-		})
+		(*aa)[i] = &Agency{
+			ID:   Key(id),
+			Name: name,
+			URL:  url,
+		}
+		i++
 	})
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if e != nil {
-		return nil, e
+		return e
 	}
 
-	return agencies, nil
+	return nil
 }
 
-// Load agencies from the GTFS agency.txt file
-func LoadAgencies(file io.Reader) (AgencyMap, error) {
+// Load and parse agencies from the GTFS agency.txt file
+func ParseAgencies(file io.Reader) (AgencyMap, error) {
 	// Read file using CSV reader
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()
@@ -101,13 +103,11 @@ func LoadAgencies(file io.Reader) (AgencyMap, error) {
 		id := Key(record[0])
 		name := record[1]
 		url := record[2]
-		timezone := record[3]
 
 		agencies[id] = &Agency{
-			ID:       id,
-			Name:     name,
-			URL:      url,
-			Timezone: timezone,
+			ID:   id,
+			Name: name,
+			URL:  url,
 		}
 	}
 

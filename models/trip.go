@@ -110,6 +110,7 @@ type Trip struct {
 	Stops     TripStopArray
 }
 type TripMap map[Key]*Trip
+type TripArray []*Trip
 
 // Saves the trip to the database
 func (t Trip) Save(row column.Row) error {
@@ -142,50 +143,48 @@ func (t *Trip) Load(row column.Row) error {
 		return errors.New("invalid stops format")
 	}
 
-	t.ID = Key(key)
-	t.RouteID = Key(routeID)
-	t.ServiceID = Key(serviceID)
-	t.ShapeID = Key(shapeID)
-	t.Direction = TripDirection(directionInt)
-	t.Headsign = headSign
-	t.Stops = *stops
-
+	*t = Trip{
+		ID:        Key(key),
+		RouteID:   Key(routeID),
+		ServiceID: Key(serviceID),
+		ShapeID:   Key(shapeID),
+		Direction: TripDirection(directionInt),
+		Headsign:  headSign,
+		Stops:     *stops,
+	}
 	return nil
 }
 
-func LoadAllTrips(txn *column.Txn) ([]*Trip, error) {
-	var e error
-	trips := make([]*Trip, 0)
-
-	keyCol := txn.Key()
+// Loads all trips from the database transaction
+func (ta *TripArray) Load(txn *column.Txn) error {
+	idCol := txn.Key()
 	routeIDCol := txn.String("route_id")
 	serviceIDCol := txn.String("service_id")
 	shapeIDCol := txn.String("shape_id")
-	directionIntCol := txn.Uint("direction")
+	directionCol := txn.Uint("direction")
 	headSignCol := txn.String("headsign")
-	stopsAnyCol := txn.Record("stops")
+	stopsCol := txn.Record("stops")
 
-	txn.Range(func(i uint32) {
-		key, keyOk := keyCol.Get()
+	count := txn.Count()
+	if count == 0 {
+		return nil
+	}
+	*ta = make(TripArray, count)
+
+	var e error
+	i := 0
+	err := txn.Range(func(idx uint32) {
+		id, idOk := idCol.Get()
 		routeID, routeIDOk := routeIDCol.Get()
 		serviceID, serviceIDOk := serviceIDCol.Get()
 		shapeID, shapeIDOk := shapeIDCol.Get()
-		directionInt, directionIntOk := directionIntCol.Get()
+		directionInt, directionIntOk := directionCol.Get()
 		headSign, headSignOk := headSignCol.Get()
-		stopsAny, stopsStrOk := stopsAnyCol.Get()
+		stopsAny, stopsStrOk := stopsCol.Get()
 
-		if !keyOk || !routeIDOk || !serviceIDOk || !shapeIDOk || !directionIntOk || !headSignOk || !stopsStrOk {
+		if !idOk || !routeIDOk || !serviceIDOk || !shapeIDOk || !directionIntOk || !headSignOk || !stopsStrOk {
 			e = errors.New("missing required fields")
 			return
-		}
-
-		trip := &Trip{
-			ID:        Key(key),
-			RouteID:   Key(routeID),
-			ServiceID: Key(serviceID),
-			ShapeID:   Key(shapeID),
-			Direction: TripDirection(directionInt),
-			Headsign:  headSign,
 		}
 
 		stops, ok := stopsAny.(*TripStopArray)
@@ -193,19 +192,29 @@ func LoadAllTrips(txn *column.Txn) ([]*Trip, error) {
 			e = errors.New("invalid stops format")
 			return
 		}
-		trip.Stops = *stops
 
-		trips = append(trips, trip)
+		(*ta)[i] = &Trip{
+			ID:        Key(id),
+			RouteID:   Key(routeID),
+			ServiceID: Key(serviceID),
+			ShapeID:   Key(shapeID),
+			Direction: TripDirection(directionInt),
+			Headsign:  headSign,
+			Stops:     *stops,
+		}
+		i++
 	})
-
-	if e != nil {
-		return nil, e
+	if err != nil {
+		return err
 	}
-	return trips, nil
+	if e != nil {
+		return e
+	}
+	return nil
 }
 
 // Get the time that a trip starts at the first stop
-func (t Trip) StartTime() uint {
+func (t *Trip) StartTime() uint {
 	if len(t.Stops) == 0 {
 		return 0
 	}
@@ -213,7 +222,7 @@ func (t Trip) StartTime() uint {
 }
 
 // Get the time that a trip ends at the last stop
-func (t Trip) EndTime() uint {
+func (t *Trip) EndTime() uint {
 	if len(t.Stops) == 0 {
 		return 0
 	}
@@ -235,8 +244,8 @@ func parseTime(timeStr string) (uint, error) {
 	return hours*60*60 + minutes*60 + seconds, nil
 }
 
-// Load trips from the GTFS trips.txt and stop_times.txt files
-func LoadTrips(tripsFile io.Reader, stopTimesFile io.Reader) (TripMap, error) {
+// Load and parse trips from the GTFS trips.txt and stop_times.txt files
+func ParseTrips(tripsFile io.Reader, stopTimesFile io.Reader) (TripMap, error) {
 	// Read stop_times file using CSV reader
 	reader := csv.NewReader(stopTimesFile)
 	records, err := reader.ReadAll()

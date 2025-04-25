@@ -256,7 +256,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error // Declare err within this scope
-		agencies, loadErr = models.LoadAgencies(readers["agency.txt"])
+		agencies, loadErr = models.ParseAgencies(readers["agency.txt"])
 		log.Infof("Loaded %d agencies", len(agencies))
 		if loadErr != nil {
 			select { // Non-blocking send to avoid deadlock if errChan is full
@@ -273,7 +273,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error
-		routes, loadErr = models.LoadRoutes(readers["routes.txt"])
+		routes, loadErr = models.ParseRoutes(readers["routes.txt"])
 		log.Infof("Loaded %d routes", len(routes))
 		if loadErr != nil {
 			select {
@@ -290,7 +290,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error
-		services, loadErr = models.LoadServices(readers["calendar.txt"])
+		services, loadErr = models.ParseServices(readers["calendar.txt"])
 		log.Infof("Loaded %d services", len(services))
 		if loadErr != nil {
 			select {
@@ -312,7 +312,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 			return
 		}
 		var loadErr error
-		serviceExceptions, loadErr = models.LoadServiceExceptions(reader)
+		serviceExceptions, loadErr = models.ParseServiceExceptions(reader)
 		log.Infof("Loaded %d service exceptions", len(serviceExceptions))
 		if loadErr != nil {
 			select {
@@ -334,7 +334,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 			return
 		}
 		var loadErr error
-		shapes, maxShapeLength, loadErr = models.LoadShapes(reader)
+		shapes, maxShapeLength, loadErr = models.ParseShapes(reader)
 		log.Infof("Loaded %d shapes", len(shapes))
 		if loadErr != nil {
 			select {
@@ -353,7 +353,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error
-		stops, loadErr = models.LoadStops(readers["stops.txt"])
+		stops, loadErr = models.ParseStops(readers["stops.txt"])
 		log.Infof("Loaded %d stops", len(stops))
 		if loadErr != nil {
 			select {
@@ -370,7 +370,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error
-		trips, loadErr = models.LoadTrips(readers["trips.txt"], readers["stop_times.txt"])
+		trips, loadErr = models.ParseTrips(readers["trips.txt"], readers["stop_times.txt"])
 		log.Infof("Loaded %d trips", len(trips))
 		if loadErr != nil {
 			select {

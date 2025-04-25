@@ -31,8 +31,9 @@ type Service struct {
 	EndDate   time.Time
 }
 type ServiceMap map[Key]*Service
+type ServiceArray []*Service
 
-// Saves the service to the database
+// Saves a service to the database
 func (s Service) Save(row column.Row) error {
 	row.SetUint("weekdays", uint(s.Weekdays))
 	row.SetString("start_date", s.StartDate.Format("20060102"))
@@ -40,24 +41,91 @@ func (s Service) Save(row column.Row) error {
 	return nil
 }
 
-// Loads the service from the database
+// Loads a service from the database
 func (s *Service) Load(row column.Row) error {
 	key, keyOk := row.Key()
 	weekdays, weekdaysOk := row.Uint("weekdays")
-	startDate, startDateOk := row.String("start_date")
-	endDate, endDateOk := row.String("end_date")
+	startDateStr, startDateOk := row.String("start_date")
+	endDateStr, endDateOk := row.String("end_date")
 
 	if !keyOk || !weekdaysOk || !startDateOk || !endDateOk {
 		return errors.New("missing required fields")
 	}
 
-	s.ID = Key(key)
-	s.Weekdays = WeekdayFlag(weekdays)
-	s.StartDate, _ = time.Parse("20060102", startDate)
-	s.EndDate, _ = time.Parse("20060102", endDate)
+	startDate, err := time.Parse("20060102", startDateStr)
+	if err != nil {
+		return err
+	}
+	endDate, err := time.Parse("20060102", endDateStr)
+	if err != nil {
+		return err
+	}
+
+	*s = Service{
+		ID:        Key(key),
+		Weekdays:  WeekdayFlag(weekdays),
+		StartDate: startDate,
+		EndDate:   endDate,
+	}
 	return nil
 }
 
+// Loads all services from the database transaction
+func (sa *ServiceArray) Load(txn *column.Txn) error {
+	idCol := txn.Key()
+	weekdaysCol := txn.Uint("weekdays")
+	startDateStrCol := txn.String("start_date")
+	endDateStrCol := txn.String("end_date")
+
+	count := txn.Count()
+	if count == 0 {
+		return nil
+	}
+	*sa = make(ServiceArray, count)
+
+	var e error
+	i := 0
+	err := txn.Range(func(idx uint32) {
+		id, idOk := idCol.Get()
+		weekdays, weekdaysOk := weekdaysCol.Get()
+		startDateStr, startDateOk := startDateStrCol.Get()
+		endDateStr, endDateOk := endDateStrCol.Get()
+
+		if !idOk || !weekdaysOk || !startDateOk || !endDateOk {
+			e = errors.New("missing required fields")
+			return
+		}
+
+		startDate, err := time.Parse("20060102", startDateStr)
+		if err != nil {
+			e = err
+			return
+		}
+		endDate, err := time.Parse("20060102", endDateStr)
+		if err != nil {
+			e = err
+			return
+		}
+
+		(*sa)[i] = &Service{
+			ID:        Key(id),
+			Weekdays:  WeekdayFlag(weekdays),
+			StartDate: startDate,
+			EndDate:   endDate,
+		}
+		i++
+	})
+	if err != nil {
+		return err
+	}
+	if e != nil {
+		return e
+	}
+
+	return nil
+}
+
+// Parses a weekday flag from the GTFS calendar.txt file
 func parseWeekdayFlag(day string, flag WeekdayFlag) WeekdayFlag {
 	dayInt, err := strconv.Atoi(day)
 	if err == nil && dayInt == 1 {
@@ -66,8 +134,8 @@ func parseWeekdayFlag(day string, flag WeekdayFlag) WeekdayFlag {
 	return 0
 }
 
-// Load services from the GTFS calendar.txt file
-func LoadServices(file io.Reader) (ServiceMap, error) {
+// Load and parse services from the GTFS calendar.txt file
+func ParseServices(file io.Reader) (ServiceMap, error) {
 	// Read file using CSV reader
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()

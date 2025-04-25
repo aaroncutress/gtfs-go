@@ -15,8 +15,9 @@ type Shape struct {
 	Coordinates CoordinateArray
 }
 type ShapeMap map[Key]*Shape
+type ShapeArray []*Shape
 
-// Saves the shape to the database
+// Saves a shape to the database
 func (s Shape) Save(row column.Row, coordsPerRow int) error {
 	i := 0
 	for currentRow := 0; currentRow < len(s.Coordinates); currentRow += coordsPerRow {
@@ -32,10 +33,9 @@ func (s Shape) Save(row column.Row, coordsPerRow int) error {
 	return nil
 }
 
-// Loads the shape from the database
+// Loads a shape from the database
 func (s *Shape) Load(row column.Row, numRows int) error {
 	key, keyOk := row.Key()
-	// coordinatesAny, coordinatesOk := row.Record("coordinates")
 
 	var coordinatesAnyAll []any
 	for i := range numRows {
@@ -62,14 +62,70 @@ func (s *Shape) Load(row column.Row, numRows int) error {
 		coordinates = append(coordinates, *coords...)
 	}
 
-	s.ID = Key(key)
-	s.Coordinates = coordinates
-
+	*s = Shape{
+		ID:          Key(key),
+		Coordinates: coordinates,
+	}
 	return nil
 }
 
-// Load shapes from the GTFS shapes.txt file
-func LoadShapes(file io.Reader) (ShapeMap, int, error) {
+// Loads all shapes from the database transaction
+func (sa *ShapeArray) Load(txn *column.Txn, numRows int) error {
+	idCol := txn.Key()
+
+	count := txn.Count()
+	if count == 0 {
+		return nil
+	}
+	*sa = make(ShapeArray, count)
+
+	var e error
+	i := 0
+	err := txn.Range(func(idx uint32) {
+		id, idOk := idCol.Get()
+		var coordinatesAnyAll []any
+		for i := range numRows {
+			coordinatesAny, coordinatesOk := txn.Record("coordinates" + strconv.Itoa(i)).Get()
+			if !coordinatesOk {
+				if i == 0 {
+					e = errors.New("missing required fields")
+					return
+				}
+				break
+			}
+			coordinatesAnyAll = append(coordinatesAnyAll, coordinatesAny)
+		}
+
+		if !idOk {
+			e = errors.New("missing required fields")
+			return
+		}
+
+		coordinates := make(CoordinateArray, 0)
+		for _, coordinatesAny := range coordinatesAnyAll {
+			coords, ok := coordinatesAny.(*CoordinateArray)
+			if !ok {
+				e = errors.New("invalid coordinates format")
+				return
+			}
+			coordinates = append(coordinates, *coords...)
+		}
+
+		(*sa)[i] = &Shape{
+			ID:          Key(id),
+			Coordinates: coordinates,
+		}
+		i++
+	})
+
+	if e != nil {
+		return e
+	}
+	return err
+}
+
+// Load and parse shapes from the GTFS shapes.txt file
+func ParseShapes(file io.Reader) (ShapeMap, int, error) {
 	// Read file using CSV reader
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()

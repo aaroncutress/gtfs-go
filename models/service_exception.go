@@ -24,8 +24,9 @@ type ServiceException struct {
 	Type      ExceptionType
 }
 type ServiceExceptionMap map[Key]*ServiceException
+type ServiceExceptionArray []*ServiceException
 
-// Saves the service exception to the database
+// Saves a service exception to the database
 func (se ServiceException) Save(row column.Row) error {
 	row.SetString("service_id", string(se.ServiceID))
 	row.SetString("date", se.Date.Format("20060102"))
@@ -33,24 +34,78 @@ func (se ServiceException) Save(row column.Row) error {
 	return nil
 }
 
-// Loads the service exception from the database
+// Loads a service exception from the database
 func (se *ServiceException) Load(row column.Row) error {
 	key, keyOk := row.Key()
-	date, dateOk := row.String("date")
+	dateStr, dateOk := row.String("date")
 	typeInt, typeIntOk := row.Uint("type")
 
 	if !keyOk || !dateOk || !typeIntOk {
 		return errors.New("missing required fields")
 	}
 
-	se.ServiceID = Key(key)
-	se.Date, _ = time.Parse("20060102", date)
-	se.Type = ExceptionType(typeInt)
+	date, err := time.Parse("20060102", dateStr)
+	if err != nil {
+		return err
+	}
+
+	*se = ServiceException{
+		ServiceID: Key(key),
+		Date:      date,
+		Type:      ExceptionType(typeInt),
+	}
 	return nil
 }
 
-// Load service exceptions from the GTFS calendar_dates.txt file
-func LoadServiceExceptions(file io.Reader) (ServiceExceptionMap, error) {
+// Loads all service exceptions from the database transaction
+func (sea *ServiceExceptionArray) Load(txn *column.Txn) error {
+	serviceIDCol := txn.String("service_id")
+	dateCol := txn.String("date")
+	typeCol := txn.Uint("type")
+
+	count := txn.Count()
+	if count == 0 {
+		return nil
+	}
+	*sea = make(ServiceExceptionArray, count)
+
+	var e error
+	i := 0
+	err := txn.Range(func(idx uint32) {
+		serviceID, serviceIDOk := serviceIDCol.Get()
+		date, dateOk := dateCol.Get()
+		typeInt, typeIntOk := typeCol.Get()
+
+		if !serviceIDOk || !dateOk || !typeIntOk {
+			e = errors.New("missing required fields")
+			return
+		}
+
+		exceptionDate, err := time.Parse("20060102", date)
+		if err != nil {
+			e = err
+			return
+		}
+
+		(*sea)[i] = &ServiceException{
+			ServiceID: Key(serviceID),
+			Date:      exceptionDate,
+			Type:      ExceptionType(typeInt),
+		}
+		i++
+	})
+	if err != nil {
+		return err
+	}
+	if e != nil {
+		return e
+	}
+
+	return nil
+}
+
+// Load and parse service exceptions from the GTFS calendar_dates.txt file
+func ParseServiceExceptions(file io.Reader) (ServiceExceptionMap, error) {
 	// Read file using CSV reader
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()

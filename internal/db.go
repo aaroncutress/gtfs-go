@@ -34,7 +34,6 @@ func (db *GTFSDB) Initialize() {
 	db.Agencies.CreateColumn("id", column.ForKey())
 	db.Agencies.CreateColumn("name", column.ForString())
 	db.Agencies.CreateColumn("url", column.ForString())
-	db.Agencies.CreateColumn("timezone", column.ForString())
 
 	// Initialize routes
 	db.Routes = column.NewCollection()
@@ -246,75 +245,83 @@ func (db *GTFSDB) Populate(
 	trips models.TripMap,
 ) error {
 	// Populate agencies
-	for _, agency := range agencies {
-		err := db.Agencies.InsertKey(string(agency.ID), agency.Save)
-		if err != nil {
-			return err
+	db.Agencies.Query(func(txn *column.Txn) error {
+		for _, agency := range agencies {
+			err := txn.InsertKey(string(agency.ID), agency.Save)
+			if err != nil {
+				return err
+			}
 		}
-	}
+		return nil
+	})
 
 	// Populate routes
-	for _, route := range routes {
-		err := db.Routes.InsertKey(string(route.ID), route.Save)
-		if err != nil {
-			return err
+	db.Routes.Query(func(txn *column.Txn) error {
+		for _, route := range routes {
+			err := txn.InsertKey(string(route.ID), route.Save)
+			if err != nil {
+				return err
+			}
 		}
-	}
+		return nil
+	})
 
 	// Populate services
-	for _, service := range services {
-		err := db.Services.InsertKey(string(service.ID), service.Save)
-		if err != nil {
-			return err
+	db.Services.Query(func(txn *column.Txn) error {
+		for _, service := range services {
+			err := txn.InsertKey(string(service.ID), service.Save)
+			if err != nil {
+				return err
+			}
 		}
-	}
+		return nil
+	})
 
 	// Populate service exceptions
-	for _, exception := range serviceExceptions {
-		_, err := db.ServiceExceptions.Insert(exception.Save)
-		if err != nil {
-			return err
+	db.ServiceExceptions.Query(func(txn *column.Txn) error {
+		for _, exception := range serviceExceptions {
+			err := txn.InsertKey(string(exception.ServiceID), exception.Save)
+			if err != nil {
+				return err
+			}
 		}
-	}
+		return nil
+	})
 
 	// Populate shapes
-	for _, shape := range shapes {
-		err := db.Shapes.InsertKey(string(shape.ID), func(row column.Row) error {
-			return shape.Save(row, CoordinatesPerRow)
-		})
-		if err != nil {
-			return err
+	db.Shapes.Query(func(txn *column.Txn) error {
+		for _, shape := range shapes {
+			err := txn.InsertKey(string(shape.ID), func(row column.Row) error {
+				return shape.Save(row, CoordinatesPerRow)
+			})
+			if err != nil {
+				return err
+			}
 		}
-	}
+		return nil
+	})
 
 	// Populate stops
-	for _, stop := range stops {
-		err := db.Stops.InsertKey(string(stop.ID), stop.Save)
-		if err != nil {
-			return err
+	db.Stops.Query(func(txn *column.Txn) error {
+		for _, stop := range stops {
+			err := txn.InsertKey(string(stop.ID), stop.Save)
+			if err != nil {
+				return err
+			}
 		}
-	}
+		return nil
+	})
 
 	// Populate trips
-	for _, trip := range trips {
-		err := db.Trips.InsertKey(string(trip.ID), trip.Save)
-		if err != nil {
-			return err
+	db.Trips.Query(func(txn *column.Txn) error {
+		for _, trip := range trips {
+			err := txn.InsertKey(string(trip.ID), trip.Save)
+			if err != nil {
+				return err
+			}
 		}
-	}
+		return nil
+	})
 
 	return nil
-}
-
-func (db *GTFSDB) GetAgencies() ([]*models.Agency, error) {
-	agencies := make([]*models.Agency, 0)
-	err := db.Agencies.Query(func(txn *column.Txn) error {
-		var err error
-		agencies, err = models.LoadAllAgencies(txn)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return agencies, nil
 }

@@ -2,7 +2,6 @@ package gtfs
 
 import (
 	"errors"
-	"time"
 
 	"github.com/aaroncutress/gtfs-go/internal"
 	"github.com/aaroncutress/gtfs-go/models"
@@ -33,16 +32,10 @@ func (g *GTFS) Save() error {
 
 // Returns the agency with the given ID
 func (g *GTFS) GetAgencyByID(agencyID models.Key) (*models.Agency, error) {
-	var agency *models.Agency
+	agency := &models.Agency{}
 
 	// Query the database for the agency with the given ID
-	err := g.db.Agencies.QueryKey(string(agencyID), func(row column.Row) error {
-		agency = &models.Agency{}
-		if err := agency.Load(row); err != nil {
-			return err
-		}
-		return nil
-	})
+	err := g.db.Agencies.QueryKey(string(agencyID), agency.Load)
 
 	if err != nil {
 		return nil, err
@@ -74,16 +67,10 @@ func (g *GTFS) GetAgencyByRouteID(routeID models.Key) (*models.Agency, error) {
 
 // Returns the route with the given ID
 func (g *GTFS) GetRouteByID(routeID models.Key) (*models.Route, error) {
-	var route *models.Route
+	route := &models.Route{}
 
 	// Query the database for the route with the given ID
-	err := g.db.Routes.QueryKey(string(routeID), func(row column.Row) error {
-		route = &models.Route{}
-		if err := route.Load(row); err != nil {
-			return err
-		}
-		return nil
-	})
+	err := g.db.Routes.QueryKey(string(routeID), route.Load)
 
 	if err != nil {
 		return nil, err
@@ -93,16 +80,10 @@ func (g *GTFS) GetRouteByID(routeID models.Key) (*models.Route, error) {
 
 // Returns the agency with the given ID
 func (g *GTFS) GetStopByID(stopID models.Key) (*models.Stop, error) {
-	var stop *models.Stop
+	stop := &models.Stop{}
 
 	// Query the database for the stop with the given ID
-	err := g.db.Stops.QueryKey(string(stopID), func(row column.Row) error {
-		stop = &models.Stop{}
-		if err := stop.Load(row); err != nil {
-			return err
-		}
-		return nil
-	})
+	err := g.db.Stops.QueryKey(string(stopID), stop.Load)
 
 	if err != nil {
 		return nil, err
@@ -111,16 +92,10 @@ func (g *GTFS) GetStopByID(stopID models.Key) (*models.Stop, error) {
 }
 
 func (g *GTFS) GetTripByID(tripID models.Key) (*models.Trip, error) {
-	var trip *models.Trip
+	trip := &models.Trip{}
 
 	// Query the database for the trip with the given ID
-	err := g.db.Trips.QueryKey(string(tripID), func(row column.Row) error {
-		trip = &models.Trip{}
-		if err := trip.Load(row); err != nil {
-			return err
-		}
-		return nil
-	})
+	err := g.db.Trips.QueryKey(string(tripID), trip.Load)
 
 	if err != nil {
 		return nil, err
@@ -129,18 +104,15 @@ func (g *GTFS) GetTripByID(tripID models.Key) (*models.Trip, error) {
 }
 
 // Returns all trips for a given route ID
-func (g *GTFS) GetTripsByRouteID(routeID models.Key) ([]*models.Trip, error) {
-	var trips []*models.Trip
+func (g *GTFS) GetTripsByRouteID(routeID models.Key) (models.TripArray, error) {
+	trips := models.TripArray{}
 
 	// Query the database for all trips associated with the route ID
 	err := g.db.Trips.Query(func(txn *column.Txn) error {
 		txnFilter := txn.WithValue("route_id", func(v any) bool {
 			return v == string(routeID)
 		})
-
-		var err error
-		trips, err = models.LoadAllTrips(txnFilter)
-		return err
+		return trips.Load(txnFilter)
 	})
 
 	if err != nil {
@@ -151,16 +123,10 @@ func (g *GTFS) GetTripsByRouteID(routeID models.Key) ([]*models.Trip, error) {
 
 // Returns the service with the given ID
 func (g *GTFS) GetServiceByID(serviceID models.Key) (*models.Service, error) {
-	var service *models.Service
+	service := &models.Service{}
 
 	// Query the database for the service with the given ID
-	err := g.db.Services.QueryKey(string(serviceID), func(row column.Row) error {
-		service = &models.Service{}
-		if err := service.Load(row); err != nil {
-			return err
-		}
-		return nil
-	})
+	err := g.db.Services.QueryKey(string(serviceID), service.Load)
 
 	if err != nil {
 		return nil, err
@@ -169,46 +135,15 @@ func (g *GTFS) GetServiceByID(serviceID models.Key) (*models.Service, error) {
 }
 
 // Returns all services exceptions for a given service ID
-func (g *GTFS) GetServiceExceptionsByServiceID(serviceID models.Key) ([]*models.ServiceException, error) {
-	var exceptions []*models.ServiceException
+func (g *GTFS) GetServiceExceptionsByServiceID(serviceID models.Key) (models.ServiceExceptionArray, error) {
+	exceptions := models.ServiceExceptionArray{}
 
 	// Query the database for all service exceptions associated with the service ID
 	err := g.db.ServiceExceptions.Query(func(txn *column.Txn) error {
-		var e error
-
-		idCol := txn.String("service_id")
-		dateCol := txn.String("date")
-		typeIntCol := txn.Uint("type")
-
-		txn.WithValue("service_id", func(v any) bool {
+		txnFilter := txn.WithValue("service_id", func(v any) bool {
 			return v == string(serviceID)
-		}).Range(func(i uint32) {
-			id, idOk := idCol.Get()
-			date, dateOk := dateCol.Get()
-			typeInt, typeIntOk := typeIntCol.Get()
-
-			if !idOk || !dateOk || !typeIntOk {
-				e = errors.New("missing required fields")
-				return
-			}
-
-			// Parse the date string into a time.Time object
-			dateTime, err := time.Parse("20060102", date)
-			if err != nil {
-				e = errors.New("failed to parse date")
-				return
-			}
-
-			exception := &models.ServiceException{
-				ServiceID: models.Key(id),
-				Date:      dateTime,
-				Type:      models.ExceptionType(typeInt),
-			}
-
-			exceptions = append(exceptions, exception)
 		})
-
-		return e
+		return exceptions.Load(txnFilter)
 	})
 
 	if err != nil {
@@ -218,21 +153,23 @@ func (g *GTFS) GetServiceExceptionsByServiceID(serviceID models.Key) ([]*models.
 }
 
 // Returns all agencies in the GTFS database
-func (g *GTFS) GetAllAgencies() ([]*models.Agency, error) {
-	agencies := make([]*models.Agency, 0)
-	err := g.db.Agencies.Query(func(txn *column.Txn) error {
-		var err error
-		agencies, err = models.LoadAllAgencies(txn)
-
-		if err != nil {
-			return err
-		}
-
-		return nil
-	})
+func (g *GTFS) GetAllAgencies() (models.AgencyArray, error) {
+	agencies := models.AgencyArray{}
+	err := g.db.Agencies.Query(agencies.Load)
 
 	if err != nil {
 		return nil, err
 	}
 	return agencies, nil
+}
+
+// Returns all routes in the GTFS database
+func (g *GTFS) GetAllRoutes() (models.RouteArray, error) {
+	routes := models.RouteArray{}
+	err := g.db.Routes.Query(routes.Load)
+
+	if err != nil {
+		return nil, err
+	}
+	return routes, nil
 }

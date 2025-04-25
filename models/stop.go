@@ -41,8 +41,9 @@ type Stop struct {
 	SupportedModes ModeFlag
 }
 type StopMap map[Key]*Stop
+type StopArray []*Stop
 
-// Saves the stop to the database
+// Saves a stop to the database
 func (s Stop) Save(r column.Row) error {
 	r.SetString("code", s.Code)
 	r.SetString("name", s.Name)
@@ -53,7 +54,7 @@ func (s Stop) Save(r column.Row) error {
 	return nil
 }
 
-// Loads the stop from the database
+// Loads a stop from the database
 func (s *Stop) Load(r column.Row) error {
 	key, keyOk := r.Key()
 	code, codeOk := r.String("code")
@@ -72,17 +73,77 @@ func (s *Stop) Load(r column.Row) error {
 		return err
 	}
 
-	s.ID = Key(key)
-	s.Code = code
-	s.Name = name
-	s.ParentID = Key(parentID)
-	s.Location = location
-	s.LocationType = LocationType(locationTypeInt)
-	s.SupportedModes = ModeFlag(supportedModesInt)
-
+	*s = Stop{
+		ID:             Key(key),
+		Code:           code,
+		Name:           name,
+		ParentID:       Key(parentID),
+		Location:       location,
+		LocationType:   LocationType(locationTypeInt),
+		SupportedModes: ModeFlag(supportedModesInt),
+	}
 	return nil
 }
 
+// Loads all stops from the database transaction
+func (sa *StopArray) Load(txn *column.Txn) error {
+	idCol := txn.Key()
+	codeCol := txn.String("code")
+	nameCol := txn.String("name")
+	parentIDCol := txn.String("parent_id")
+	locationCol := txn.String("location")
+	locationTypeCol := txn.Uint("location_type")
+	supportedModesCol := txn.Uint("supported_modes")
+
+	count := txn.Count()
+	if count == 0 {
+		return nil
+	}
+	*sa = make(StopArray, count)
+
+	var e error
+	i := 0
+	err := txn.Range(func(idx uint32) {
+		id, idOk := idCol.Get()
+		code, codeOk := codeCol.Get()
+		name, nameOk := nameCol.Get()
+		parentID, parentIDOk := parentIDCol.Get()
+		locationStr, locationStrOk := locationCol.Get()
+		locationTypeInt, locationTypeIntOk := locationTypeCol.Get()
+		supportedModesInt, supportedModesIntOk := supportedModesCol.Get()
+
+		if !idOk || !codeOk || !nameOk || !parentIDOk || !locationStrOk || !locationTypeIntOk || !supportedModesIntOk {
+			e = errors.New("missing required fields")
+			return
+		}
+
+		location, err := NewCoordinateFromString(locationStr)
+		if err != nil {
+			e = err
+			return
+		}
+
+		(*sa)[i] = &Stop{
+			ID:             Key(id),
+			Code:           code,
+			Name:           name,
+			ParentID:       Key(parentID),
+			Location:       location,
+			LocationType:   LocationType(locationTypeInt),
+			SupportedModes: ModeFlag(supportedModesInt),
+		}
+		i++
+	})
+	if err != nil {
+		return err
+	}
+	if e != nil {
+		return e
+	}
+	return nil
+}
+
+// Parse a string into a ModeFlag
 func parseModeFlag(mode string) ModeFlag {
 	switch mode {
 	case "Bus":
@@ -98,8 +159,8 @@ func parseModeFlag(mode string) ModeFlag {
 	}
 }
 
-// Load stops from the GTFS stops.txt file
-func LoadStops(file io.Reader) (StopMap, error) {
+// Load and parse stops from the GTFS stops.txt file
+func ParseStops(file io.Reader) (StopMap, error) {
 	// Read file using CSV reader
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()
