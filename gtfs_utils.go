@@ -18,8 +18,8 @@ func hasDay(flags models.WeekdayFlag, day time.Weekday) bool {
 	return (flags & dayFlag) != 0
 }
 
-// Returns all trips that are currently running
-func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
+// Returns all trips that are currently running at the given time
+func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 	// Get all trips from the database
 	log.Info("Fetching all trips from the database")
 
@@ -31,9 +31,8 @@ func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
 
 	log.Infof("Fetched and decoded %d trips", len(trips))
 
-	now := time.Now().UTC()
-	nowTruncated := now.Truncate(24 * time.Hour)
-	weekday := nowTruncated.Weekday()
+	truncated := t.Truncate(24 * time.Hour)
+	weekday := truncated.Weekday()
 
 	currentTrips := make(models.TripArray, len(trips))
 	total := 0
@@ -43,28 +42,28 @@ func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
 	runningCache := make(map[models.Key]bool) // service id -> running
 	for _, trip := range trips {
 		// Get the trip start and end times
-		tripStart := nowTruncated.Add(time.Duration(trip.StartTime()) * time.Second)
+		tripStart := truncated.Add(time.Duration(trip.StartTime()) * time.Second)
 		if models.IsNextDay(trip.StartTime()) {
 			tripStart = tripStart.Add(24 * time.Hour)
 		}
-		tripEnd := nowTruncated.Add(time.Duration(trip.EndTime()) * time.Second)
+		tripEnd := truncated.Add(time.Duration(trip.EndTime()) * time.Second)
 		if models.IsNextDay(trip.EndTime()) {
 			tripEnd = tripEnd.Add(24 * time.Hour)
 		}
 
-		// Check if the trip is currently running
-		if tripStart.After(now) || tripEnd.Before(now) {
+		// Check if the trip is running
+		if tripStart.After(t) || tripEnd.Before(t) {
 			continue
 		}
 
-		// Check if the trip is running today
+		// Check if the trip is running on the given day
 		running, ok := runningCache[trip.ServiceID]
 		if !ok {
 			service, err := g.GetServiceByID(trip.ServiceID)
 			if err != nil {
 				return nil, err
 			}
-			exception, _ := g.GetServiceException(trip.ServiceID, nowTruncated)
+			exception, _ := g.GetServiceException(trip.ServiceID, truncated)
 
 			if hasDay(service.Weekdays, weekday) {
 				running = exception == nil || exception.Type != models.RemovedExceptionType
@@ -87,4 +86,9 @@ func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
 
 	currentTrips = currentTrips[:total]
 	return currentTrips, nil
+}
+
+// Returns all trips that are currently running
+func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
+	return g.GetCurrentTripsAt(time.Now().UTC())
 }
