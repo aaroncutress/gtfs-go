@@ -52,11 +52,11 @@ func (s *Service) Load(row column.Row) error {
 		return errors.New("missing required fields")
 	}
 
-	startDate, err := time.Parse("20060102", startDateStr)
+	startDate, err := time.ParseInLocation("20060102", startDateStr, time.UTC)
 	if err != nil {
 		return err
 	}
-	endDate, err := time.Parse("20060102", endDateStr)
+	endDate, err := time.ParseInLocation("20060102", endDateStr, time.UTC)
 	if err != nil {
 		return err
 	}
@@ -64,8 +64,8 @@ func (s *Service) Load(row column.Row) error {
 	*s = Service{
 		ID:        Key(key),
 		Weekdays:  WeekdayFlag(weekdays),
-		StartDate: startDate,
-		EndDate:   endDate,
+		StartDate: startDate.UTC(),
+		EndDate:   endDate.UTC(),
 	}
 	return nil
 }
@@ -96,12 +96,12 @@ func (sa *ServiceArray) Load(txn *column.Txn) error {
 			return
 		}
 
-		startDate, err := time.Parse("20060102", startDateStr)
+		startDate, err := time.ParseInLocation("20060102", startDateStr, time.UTC)
 		if err != nil {
 			e = err
 			return
 		}
-		endDate, err := time.Parse("20060102", endDateStr)
+		endDate, err := time.ParseInLocation("20060102", endDateStr, time.UTC)
 		if err != nil {
 			e = err
 			return
@@ -151,11 +151,11 @@ func ParseServices(file io.Reader) (ServiceMap, error) {
 
 		// Parse record into Service struct
 		id := Key(record[0])
-		startDate, err := time.Parse("20060102", record[8])
+		startDate, err := time.ParseInLocation("20060102", record[8], time.UTC)
 		if err != nil {
 			return nil, err
 		}
-		endDate, err := time.Parse("20060102", record[9])
+		endDate, err := time.ParseInLocation("20060102", record[9], time.UTC)
 		if err != nil {
 			return nil, err
 		}

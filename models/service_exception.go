@@ -44,7 +44,7 @@ func (se *ServiceException) Load(row column.Row) error {
 		return errors.New("missing required fields")
 	}
 
-	date, err := time.Parse("20060102", dateStr)
+	date, err := time.ParseInLocation("20060102", dateStr, time.UTC)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func (sea *ServiceExceptionArray) Load(txn *column.Txn) error {
 			return
 		}
 
-		exceptionDate, err := time.Parse("20060102", date)
+		exceptionDate, err := time.ParseInLocation("20060102", date, time.UTC)
 		if err != nil {
 			e = err
 			return
@@ -121,7 +121,7 @@ func ParseServiceExceptions(file io.Reader) (ServiceExceptionMap, error) {
 
 		// Parse record into ServiceException struct
 		serviceID := Key(record[0])
-		date, err := time.Parse("20060102", record[1])
+		date, err := time.ParseInLocation("20060102", record[1], time.UTC)
 		if err != nil {
 			return nil, err
 		}

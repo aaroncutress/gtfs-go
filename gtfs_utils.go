@@ -24,7 +24,8 @@ func isRunningToday(g *GTFS, trip *models.Trip, cache *map[models.Key]bool) (boo
 		return false, err
 	}
 
-	today := time.Now().Truncate(24 * time.Hour)
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	todayStr := today.Format("20060102")
 	dayOfWeek := today.Weekday()
 
 	// Check if the service is not (normally) running today
@@ -32,7 +33,7 @@ func isRunningToday(g *GTFS, trip *models.Trip, cache *map[models.Key]bool) (boo
 		if len(exceptions) > 0 {
 			// Check if there are any exceptions for today
 			for _, exception := range exceptions {
-				if exception.Date == today && exception.Type == models.AddedExceptionType {
+				if exception.Date.Format("20060102") == todayStr && exception.Type == models.AddedExceptionType {
 					(*cache)[trip.ServiceID] = true
 					return true, nil
 				}
@@ -52,7 +53,7 @@ func isRunningToday(g *GTFS, trip *models.Trip, cache *map[models.Key]bool) (boo
 
 	// Check if any exceptions are set for today and whether the service is removed
 	for _, exception := range exceptions {
-		if exception.Date == today && exception.Type == models.RemovedExceptionType {
+		if exception.Date.Format("20060102") == todayStr && exception.Type == models.RemovedExceptionType {
 			(*cache)[trip.ServiceID] = false
 			return false, nil
 		}
@@ -101,7 +102,7 @@ func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
 			continue
 		}
 
-		log.Debugf("Trip %s: Start %s, End %s", trip.ID, tripStart.Format(time.RFC3339), tripEnd.Format(time.RFC3339))
+		log.Debugf("Trip %s: Start %s, End %s, Now %s", trip.ID, tripStart.Format(time.RFC3339), tripEnd.Format(time.RFC3339), now.Format(time.RFC3339))
 
 		// Check if the trip is running today
 		isRunning, err := isRunningToday(g, trip, &cache)
