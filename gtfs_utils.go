@@ -7,61 +7,15 @@ import (
 	"github.com/charmbracelet/log"
 )
 
-// Checks if the given trip is running today
-func isRunningToday(g *GTFS, trip *models.Trip, cache *map[models.Key]bool) (bool, error) {
-	cached, ok := (*cache)[trip.ServiceID]
-	if ok {
-		return cached, nil
+// Check if a given weekday is present in the flags
+func hasDay(flags models.WeekdayFlag, day time.Weekday) bool {
+	if day < time.Sunday || day > time.Saturday {
+		return false
 	}
 
-	// Retrieve the trip and service information
-	service, err := g.GetServiceByID(trip.ServiceID)
-	if err != nil {
-		return false, err
-	}
-	exceptions, err := g.GetServiceExceptionsByServiceID(trip.ServiceID)
-	if err != nil {
-		return false, err
-	}
-
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	todayStr := today.Format("20060102")
-	dayOfWeek := today.Weekday()
-
-	// Check if the service is not (normally) running today
-	if (service.Weekdays & (1 << dayOfWeek)) == 0 {
-		if len(exceptions) > 0 {
-			// Check if there are any exceptions for today
-			for _, exception := range exceptions {
-				if exception.Date.Format("20060102") == todayStr && exception.Type == models.AddedExceptionType {
-					(*cache)[trip.ServiceID] = true
-					return true, nil
-				}
-			}
-		}
-
-		// If the service is not running today and there are no exceptions, return false
-		(*cache)[trip.ServiceID] = false
-		return false, nil
-	}
-
-	// If the service is running today and there are exceptions, return true
-	if len(exceptions) == 0 {
-		(*cache)[trip.ServiceID] = true
-		return true, nil
-	}
-
-	// Check if any exceptions are set for today and whether the service is removed
-	for _, exception := range exceptions {
-		if exception.Date.Format("20060102") == todayStr && exception.Type == models.RemovedExceptionType {
-			(*cache)[trip.ServiceID] = false
-			return false, nil
-		}
-	}
-
-	// All is well
-	(*cache)[trip.ServiceID] = true
-	return true, nil
+	bitPos := (int(day) - 1 + 7) % 7
+	dayFlag := models.WeekdayFlag(1 << bitPos)
+	return (flags & dayFlag) != 0
 }
 
 // Returns all trips that are currently running
@@ -79,13 +33,14 @@ func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
 
 	now := time.Now().UTC()
 	nowTruncated := now.Truncate(24 * time.Hour)
+	weekday := nowTruncated.Weekday()
 
 	currentTrips := make(models.TripArray, len(trips))
 	total := 0
 
 	log.Info("Checking each trip for current status")
 
-	cache := make(map[models.Key]bool)
+	runningCache := make(map[models.Key]bool) // service id -> running
 	for _, trip := range trips {
 		// Get the trip start and end times
 		tripStart := nowTruncated.Add(time.Duration(trip.StartTime()) * time.Second)
@@ -102,14 +57,26 @@ func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
 			continue
 		}
 
-		log.Debugf("Trip %s: Start %s, End %s, Now %s", trip.ID, tripStart.Format(time.RFC3339), tripEnd.Format(time.RFC3339), now.Format(time.RFC3339))
-
 		// Check if the trip is running today
-		isRunning, err := isRunningToday(g, trip, &cache)
-		if err != nil {
-			return nil, err
+		running, ok := runningCache[trip.ServiceID]
+		if !ok {
+			service, err := g.GetServiceByID(trip.ServiceID)
+			if err != nil {
+				return nil, err
+			}
+			exception, _ := g.GetServiceException(trip.ServiceID, nowTruncated)
+
+			if hasDay(service.Weekdays, weekday) {
+				running = exception == nil || exception.Type != models.RemovedExceptionType
+			} else {
+				running = exception != nil && exception.Type == models.AddedExceptionType
+			}
+
+			runningCache[trip.ServiceID] = running
 		}
-		if !isRunning {
+
+		// Skip the trip if it's not running today
+		if !running {
 			continue
 		}
 
@@ -119,6 +86,5 @@ func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
 	}
 
 	currentTrips = currentTrips[:total]
-
 	return currentTrips, nil
 }

@@ -56,8 +56,7 @@ func (db *GTFSDB) Initialize() {
 
 	// Initialize service exceptions
 	db.ServiceExceptions = column.NewCollection()
-	db.ServiceExceptions.CreateColumn("service_id", column.ForString())
-	db.ServiceExceptions.CreateColumn("date", column.ForString())
+	db.ServiceExceptions.CreateColumn("id_date", column.ForKey())
 	db.ServiceExceptions.CreateColumn("type", column.ForUint())
 
 	// Initialize shapes
@@ -280,7 +279,8 @@ func (db *GTFSDB) Populate(
 	// Populate service exceptions
 	db.ServiceExceptions.Query(func(txn *column.Txn) error {
 		for _, exception := range serviceExceptions {
-			err := txn.InsertKey(string(exception.ServiceID), exception.Save)
+			key := string(exception.ServiceID) + exception.Date.Format("20060102")
+			err := txn.InsertKey(key, exception.Save)
 			if err != nil {
 				return err
 			}

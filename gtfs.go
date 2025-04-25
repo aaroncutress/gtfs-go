@@ -2,6 +2,7 @@ package gtfs
 
 import (
 	"errors"
+	"time"
 
 	"github.com/aaroncutress/gtfs-go/internal"
 	"github.com/aaroncutress/gtfs-go/models"
@@ -134,22 +135,18 @@ func (g *GTFS) GetServiceByID(serviceID models.Key) (*models.Service, error) {
 	return service, nil
 }
 
-// Returns all services exceptions for a given service ID
-func (g *GTFS) GetServiceExceptionsByServiceID(serviceID models.Key) (models.ServiceExceptionArray, error) {
-	exceptions := models.ServiceExceptionArray{}
+// Returns all services exceptions for a given service ID and date
+func (g *GTFS) GetServiceException(serviceID models.Key, date time.Time) (*models.ServiceException, error) {
+	exception := &models.ServiceException{}
 
-	// Query the database for all service exceptions associated with the service ID
-	err := g.db.ServiceExceptions.Query(func(txn *column.Txn) error {
-		txnFilter := txn.WithValue("service_id", func(v any) bool {
-			return v == string(serviceID)
-		})
-		return exceptions.Load(txnFilter)
-	})
+	// Query the database for the service exception with the given service ID and date
+	key := string(serviceID) + date.Format("20060102")
+	err := g.db.ServiceExceptions.QueryKey(key, exception.Load)
 
 	if err != nil {
 		return nil, err
 	}
-	return exceptions, nil
+	return exception, nil
 }
 
 // Returns all agencies in the GTFS database

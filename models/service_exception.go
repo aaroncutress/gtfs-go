@@ -28,8 +28,6 @@ type ServiceExceptionArray []*ServiceException
 
 // Saves a service exception to the database
 func (se ServiceException) Save(row column.Row) error {
-	row.SetString("service_id", string(se.ServiceID))
-	row.SetString("date", se.Date.Format("20060102"))
 	row.SetUint("type", uint(se.Type))
 	return nil
 }
@@ -37,20 +35,21 @@ func (se ServiceException) Save(row column.Row) error {
 // Loads a service exception from the database
 func (se *ServiceException) Load(row column.Row) error {
 	key, keyOk := row.Key()
-	dateStr, dateOk := row.String("date")
 	typeInt, typeIntOk := row.Uint("type")
 
-	if !keyOk || !dateOk || !typeIntOk {
+	if !keyOk || !typeIntOk {
 		return errors.New("missing required fields")
 	}
 
+	service_id := key[:len(key)-8]
+	dateStr := key[len(key)-8:]
 	date, err := time.ParseInLocation("20060102", dateStr, time.UTC)
 	if err != nil {
 		return err
 	}
 
 	*se = ServiceException{
-		ServiceID: Key(key),
+		ServiceID: Key(service_id),
 		Date:      date,
 		Type:      ExceptionType(typeInt),
 	}
@@ -59,8 +58,7 @@ func (se *ServiceException) Load(row column.Row) error {
 
 // Loads all service exceptions from the database transaction
 func (sea *ServiceExceptionArray) Load(txn *column.Txn) error {
-	serviceIDCol := txn.String("service_id")
-	dateCol := txn.String("date")
+	keyCol := txn.Key()
 	typeCol := txn.Uint("type")
 
 	count := txn.Count()
@@ -72,15 +70,16 @@ func (sea *ServiceExceptionArray) Load(txn *column.Txn) error {
 	var e error
 	i := 0
 	err := txn.Range(func(idx uint32) {
-		serviceID, serviceIDOk := serviceIDCol.Get()
-		date, dateOk := dateCol.Get()
+		key, keyOk := keyCol.Get()
 		typeInt, typeIntOk := typeCol.Get()
 
-		if !serviceIDOk || !dateOk || !typeIntOk {
+		if !keyOk || !typeIntOk {
 			e = errors.New("missing required fields")
 			return
 		}
 
+		serviceID := key[:len(key)-8]
+		date := key[len(key)-8:]
 		exceptionDate, err := time.ParseInLocation("20060102", date, time.UTC)
 		if err != nil {
 			e = err

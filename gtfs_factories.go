@@ -133,16 +133,6 @@ func (g *GTFS) FromDB(dbFile string) error {
 
 // Construct a new GTFS database from a hosted GTFS URL
 func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
-	// Delete the existing database file if it exists
-	if _, err := os.Stat(dbFile); err == nil {
-		err = os.Remove(dbFile)
-		if err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
 	// Create the database file
 	dirPath := filepath.Dir(dbFile)
 	err := os.MkdirAll(dirPath, 0755)
