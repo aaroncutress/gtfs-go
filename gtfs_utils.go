@@ -3,30 +3,29 @@ package gtfs
 import (
 	"time"
 
-	"github.com/aaroncutress/gtfs-go/models"
 	"github.com/charmbracelet/log"
 )
 
 const secondsInDay = 24 * 60 * 60
 
 // Check if a given weekday is present in the flags
-func hasDay(flags models.WeekdayFlag, day time.Weekday) bool {
+func hasDay(flags WeekdayFlag, day time.Weekday) bool {
 	if day < time.Sunday || day > time.Saturday {
 		return false
 	}
 
 	bitPos := (int(day) + 6) % 7
-	dayFlag := models.WeekdayFlag(1 << bitPos)
+	dayFlag := WeekdayFlag(1 << bitPos)
 	return (flags & dayFlag) != 0
 }
 
 // Returns all trips that are currently running at the given time
-func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
+func (g *GTFS) GetCurrentTripsAt(t time.Time) (TripArray, error) {
 	// Get all trips from the database
 	log.Debug("Fetching all trips from the database")
 
-	var trips models.TripArray
-	err := g.db.Trips.Query(trips.Load)
+	var trips TripArray
+	err := g.db.trips.Query(trips.Load)
 	if err != nil {
 		return nil, err
 	}
@@ -37,12 +36,12 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 	nextT := t.Add(24 * time.Hour)
 	weekday := truncated.Weekday()
 
-	currentTrips := make(models.TripArray, len(trips))
+	currentTrips := make(TripArray, len(trips))
 	total := 0
 
 	log.Debug("Checking each trip for current status")
 
-	runningCache := make(map[models.Key]bool) // service id -> running
+	runningCache := make(map[Key]bool) // service id -> running
 	for _, trip := range trips {
 		// Get the trip start and end times
 		tripStart := truncated.Add(time.Duration(trip.StartTime()) * time.Second)
@@ -71,9 +70,9 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 			exception, _ := g.GetServiceException(trip.ServiceID, truncated)
 
 			if hasDay(service.Weekdays, weekday) {
-				running = exception == nil || exception.Type != models.RemovedExceptionType
+				running = exception == nil || exception.Type != RemovedExceptionType
 			} else {
-				running = exception != nil && exception.Type == models.AddedExceptionType
+				running = exception != nil && exception.Type == AddedExceptionType
 			}
 
 			runningCache[trip.ServiceID] = running
@@ -94,6 +93,6 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (models.TripArray, error) {
 }
 
 // Returns all trips that are currently running
-func (g *GTFS) GetAllCurrentTrips() (models.TripArray, error) {
+func (g *GTFS) GetAllCurrentTrips() (TripArray, error) {
 	return g.GetCurrentTripsAt(time.Now().UTC())
 }

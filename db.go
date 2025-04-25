@@ -1,4 +1,4 @@
-package internal
+package gtfs
 
 import (
 	"archive/zip"
@@ -8,94 +8,93 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/aaroncutress/gtfs-go/models"
 	"github.com/kelindar/column"
 )
 
 const CoordinatesPerRow = 2000
 
-type GTFSDB struct {
-	Agencies          *column.Collection
-	Routes            *column.Collection
-	Services          *column.Collection
-	ServiceExceptions *column.Collection
-	Shapes            *column.Collection
-	Stops             *column.Collection
-	Trips             *column.Collection
+type gtfsdb struct {
+	agencies          *column.Collection
+	routes            *column.Collection
+	services          *column.Collection
+	serviceExceptions *column.Collection
+	shapes            *column.Collection
+	stops             *column.Collection
+	trips             *column.Collection
 
 	// Metadata
-	MaxShapeLength int
+	maxShapeLength int
 }
 
 // Initalize the GTFS database schema
-func (db *GTFSDB) Initialize() {
+func (db *gtfsdb) initialize() {
 	// Initialize agencies
-	db.Agencies = column.NewCollection()
-	db.Agencies.CreateColumn("id", column.ForKey())
-	db.Agencies.CreateColumn("name", column.ForString())
-	db.Agencies.CreateColumn("url", column.ForString())
+	db.agencies = column.NewCollection()
+	db.agencies.CreateColumn("id", column.ForKey())
+	db.agencies.CreateColumn("name", column.ForString())
+	db.agencies.CreateColumn("url", column.ForString())
 
 	// Initialize routes
-	db.Routes = column.NewCollection()
-	db.Routes.CreateColumn("id", column.ForKey())
-	db.Routes.CreateColumn("agency_id", column.ForString())
-	db.Routes.CreateColumn("name", column.ForString())
-	db.Routes.CreateColumn("type", column.ForUint())
-	db.Routes.CreateColumn("colour", column.ForString())
-	db.Routes.CreateColumn("shape_id", column.ForString())
-	db.Routes.CreateColumn("stops", column.ForRecord(func() *models.KeyArray {
-		return new(models.KeyArray)
+	db.routes = column.NewCollection()
+	db.routes.CreateColumn("id", column.ForKey())
+	db.routes.CreateColumn("agency_id", column.ForString())
+	db.routes.CreateColumn("name", column.ForString())
+	db.routes.CreateColumn("type", column.ForUint())
+	db.routes.CreateColumn("colour", column.ForString())
+	db.routes.CreateColumn("shape_id", column.ForString())
+	db.routes.CreateColumn("stops", column.ForRecord(func() *KeyArray {
+		return new(KeyArray)
 	}))
 
 	// Initialize services
-	db.Services = column.NewCollection()
-	db.Services.CreateColumn("id", column.ForKey())
-	db.Services.CreateColumn("weekdays", column.ForUint())
-	db.Services.CreateColumn("start_date", column.ForString())
-	db.Services.CreateColumn("end_date", column.ForString())
+	db.services = column.NewCollection()
+	db.services.CreateColumn("id", column.ForKey())
+	db.services.CreateColumn("weekdays", column.ForUint())
+	db.services.CreateColumn("start_date", column.ForString())
+	db.services.CreateColumn("end_date", column.ForString())
 
 	// Initialize service exceptions
-	db.ServiceExceptions = column.NewCollection()
-	db.ServiceExceptions.CreateColumn("id_date", column.ForKey())
-	db.ServiceExceptions.CreateColumn("type", column.ForUint())
+	db.serviceExceptions = column.NewCollection()
+	db.serviceExceptions.CreateColumn("id_date", column.ForKey())
+	db.serviceExceptions.CreateColumn("type", column.ForUint())
 
 	// Initialize shapes
-	db.Shapes = column.NewCollection()
-	db.Shapes.CreateColumn("id", column.ForKey())
-	numRows := int(math.Ceil(float64(db.MaxShapeLength) / float64(CoordinatesPerRow)))
+	db.shapes = column.NewCollection()
+	db.shapes.CreateColumn("id", column.ForKey())
+	numRows := int(math.Ceil(float64(db.maxShapeLength) / float64(CoordinatesPerRow)))
 	for i := range numRows {
-		db.Shapes.CreateColumn("coordinates"+strconv.Itoa(i), column.ForRecord(func() *models.CoordinateArray {
-			return new(models.CoordinateArray)
+		db.shapes.CreateColumn("coordinates"+strconv.Itoa(i), column.ForRecord(func() *CoordinateArray {
+			return new(CoordinateArray)
 		}))
 	}
 
 	// Initialize stops
-	db.Stops = column.NewCollection()
-	db.Stops.CreateColumn("id", column.ForKey())
-	db.Stops.CreateColumn("code", column.ForString())
-	db.Stops.CreateColumn("name", column.ForString())
-	db.Stops.CreateColumn("parent_id", column.ForString())
-	db.Stops.CreateColumn("location", column.ForString())
-	db.Stops.CreateColumn("location_type", column.ForUint())
-	db.Stops.CreateColumn("supported_modes", column.ForUint())
+	db.stops = column.NewCollection()
+	db.stops.CreateColumn("id", column.ForKey())
+	db.stops.CreateColumn("code", column.ForString())
+	db.stops.CreateColumn("name", column.ForString())
+	db.stops.CreateColumn("parent_id", column.ForString())
+	db.stops.CreateColumn("location", column.ForString())
+	db.stops.CreateColumn("location_type", column.ForUint())
+	db.stops.CreateColumn("supported_modes", column.ForUint())
 
 	// Initialize trips
-	db.Trips = column.NewCollection()
-	db.Trips.CreateColumn("id", column.ForKey())
-	db.Trips.CreateColumn("route_id", column.ForString())
-	db.Trips.CreateColumn("service_id", column.ForString())
-	db.Trips.CreateColumn("shape_id", column.ForString())
-	db.Trips.CreateColumn("direction", column.ForUint())
-	db.Trips.CreateColumn("headsign", column.ForString())
-	db.Trips.CreateColumn("stops", column.ForRecord(func() *models.TripStopArray {
-		return new(models.TripStopArray)
+	db.trips = column.NewCollection()
+	db.trips.CreateColumn("id", column.ForKey())
+	db.trips.CreateColumn("route_id", column.ForString())
+	db.trips.CreateColumn("service_id", column.ForString())
+	db.trips.CreateColumn("shape_id", column.ForString())
+	db.trips.CreateColumn("direction", column.ForUint())
+	db.trips.CreateColumn("headsign", column.ForString())
+	db.trips.CreateColumn("stops", column.ForRecord(func() *TripStopArray {
+		return new(TripStopArray)
 	}))
 }
 
-// Load loads the GTFS database from a zip file.
-func (db *GTFSDB) Load(filePath string) (int, error) {
+// load loads the GTFS database from a zip file.
+func (db *gtfsdb) load(filePath string) (int, error) {
 	// Initialize the database schema
-	db.Initialize()
+	db.initialize()
 
 	// Open the zip file
 	zipFile, err := os.Open(filePath)
@@ -126,19 +125,19 @@ func (db *GTFSDB) Load(filePath string) (int, error) {
 		// Load the file into the appropriate collection
 		switch file.Name {
 		case "agencies":
-			err = db.Agencies.Restore(f)
+			err = db.agencies.Restore(f)
 		case "routes":
-			err = db.Routes.Restore(f)
+			err = db.routes.Restore(f)
 		case "services":
-			err = db.Services.Restore(f)
+			err = db.services.Restore(f)
 		case "service_exceptions":
-			err = db.ServiceExceptions.Restore(f)
+			err = db.serviceExceptions.Restore(f)
 		case "shapes":
-			err = db.Shapes.Restore(f)
+			err = db.shapes.Restore(f)
 		case "stops":
-			err = db.Stops.Restore(f)
+			err = db.stops.Restore(f)
 		case "trips":
-			err = db.Trips.Restore(f)
+			err = db.trips.Restore(f)
 		default:
 			continue
 		}
@@ -172,13 +171,13 @@ func (db *GTFSDB) Load(filePath string) (int, error) {
 		return 0, errors.New("invalid metadata max_shape_length")
 	}
 	maxShapeLength := int(maxShapeLengthF)
-	db.MaxShapeLength = maxShapeLength
+	db.maxShapeLength = maxShapeLength
 
 	return version, nil
 }
 
-// Save saves the GTFS database to a zip file.
-func (db *GTFSDB) Save(filePath string, version int) error {
+// save saves the GTFS database to a zip file.
+func (db *gtfsdb) save(filePath string, version int) error {
 	zipFile, err := os.Create(filePath)
 	if err != nil {
 		return err
@@ -190,13 +189,13 @@ func (db *GTFSDB) Save(filePath string, version int) error {
 
 	// Create a new zip file for each collection
 	collections := map[string]*column.Collection{
-		"agencies":           db.Agencies,
-		"routes":             db.Routes,
-		"services":           db.Services,
-		"service_exceptions": db.ServiceExceptions,
-		"shapes":             db.Shapes,
-		"stops":              db.Stops,
-		"trips":              db.Trips,
+		"agencies":           db.agencies,
+		"routes":             db.routes,
+		"services":           db.services,
+		"service_exceptions": db.serviceExceptions,
+		"shapes":             db.shapes,
+		"stops":              db.stops,
+		"trips":              db.trips,
 	}
 
 	// Write each collection to a separate file in the zip archive
@@ -219,7 +218,7 @@ func (db *GTFSDB) Save(filePath string, version int) error {
 	}
 	metadata := map[string]any{
 		"version":          version,
-		"max_shape_length": db.MaxShapeLength,
+		"max_shape_length": db.maxShapeLength,
 	}
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
@@ -234,17 +233,17 @@ func (db *GTFSDB) Save(filePath string, version int) error {
 }
 
 // Populates the GTFS database with data from the provided maps.
-func (db *GTFSDB) Populate(
-	agencies models.AgencyMap,
-	routes models.RouteMap,
-	services models.ServiceMap,
-	serviceExceptions models.ServiceExceptionMap,
-	shapes models.ShapeMap,
-	stops models.StopMap,
-	trips models.TripMap,
+func (db *gtfsdb) Populate(
+	agencies AgencyMap,
+	routes RouteMap,
+	services ServiceMap,
+	serviceExceptions ServiceExceptionMap,
+	shapes ShapeMap,
+	stops StopMap,
+	trips TripMap,
 ) error {
 	// Populate agencies
-	db.Agencies.Query(func(txn *column.Txn) error {
+	db.agencies.Query(func(txn *column.Txn) error {
 		for _, agency := range agencies {
 			err := txn.InsertKey(string(agency.ID), agency.Save)
 			if err != nil {
@@ -255,7 +254,7 @@ func (db *GTFSDB) Populate(
 	})
 
 	// Populate routes
-	db.Routes.Query(func(txn *column.Txn) error {
+	db.routes.Query(func(txn *column.Txn) error {
 		for _, route := range routes {
 			err := txn.InsertKey(string(route.ID), route.Save)
 			if err != nil {
@@ -266,7 +265,7 @@ func (db *GTFSDB) Populate(
 	})
 
 	// Populate services
-	db.Services.Query(func(txn *column.Txn) error {
+	db.services.Query(func(txn *column.Txn) error {
 		for _, service := range services {
 			err := txn.InsertKey(string(service.ID), service.Save)
 			if err != nil {
@@ -277,7 +276,7 @@ func (db *GTFSDB) Populate(
 	})
 
 	// Populate service exceptions
-	db.ServiceExceptions.Query(func(txn *column.Txn) error {
+	db.serviceExceptions.Query(func(txn *column.Txn) error {
 		for _, exception := range serviceExceptions {
 			key := string(exception.ServiceID) + exception.Date.Format("20060102")
 			err := txn.InsertKey(key, exception.Save)
@@ -289,7 +288,7 @@ func (db *GTFSDB) Populate(
 	})
 
 	// Populate shapes
-	db.Shapes.Query(func(txn *column.Txn) error {
+	db.shapes.Query(func(txn *column.Txn) error {
 		for _, shape := range shapes {
 			err := txn.InsertKey(string(shape.ID), func(row column.Row) error {
 				return shape.Save(row, CoordinatesPerRow)
@@ -302,7 +301,7 @@ func (db *GTFSDB) Populate(
 	})
 
 	// Populate stops
-	db.Stops.Query(func(txn *column.Txn) error {
+	db.stops.Query(func(txn *column.Txn) error {
 		for _, stop := range stops {
 			err := txn.InsertKey(string(stop.ID), stop.Save)
 			if err != nil {
@@ -313,7 +312,7 @@ func (db *GTFSDB) Populate(
 	})
 
 	// Populate trips
-	db.Trips.Query(func(txn *column.Txn) error {
+	db.trips.Query(func(txn *column.Txn) error {
 		for _, trip := range trips {
 			err := txn.InsertKey(string(trip.ID), trip.Save)
 			if err != nil {

@@ -1,4 +1,4 @@
-package models
+package gtfs
 
 import (
 	"encoding/csv"

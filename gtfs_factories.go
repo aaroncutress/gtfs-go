@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/aaroncutress/gtfs-go/internal"
-	"github.com/aaroncutress/gtfs-go/models"
 	"github.com/charmbracelet/log"
 	"github.com/hashicorp/go-set/v3"
 	"resty.dev/v3"
@@ -20,35 +18,35 @@ const CurrentVersion = 1
 
 // Temporary struct to hold the shape ID and stop IDs for each route
 type routeShapeAndStops struct {
-	shapeID models.Key
-	stopIDs models.KeyArray
+	shapeID Key
+	stopIDs KeyArray
 }
-type routeShapeAndStopsMap map[models.Key]routeShapeAndStops
+type routeShapeAndStopsMap map[Key]routeShapeAndStops
 
 // Get the most common shape ID and stop IDs for each route
-func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error) {
-	routeTrips := make(map[models.Key][]*models.Trip)
+func getRouteShapeAndStops(tripMap TripMap) (routeShapeAndStopsMap, error) {
+	routeTrips := make(map[Key][]*Trip)
 	for _, trip := range tripMap {
 		if _, ok := routeTrips[trip.RouteID]; !ok {
-			routeTrips[trip.RouteID] = []*models.Trip{}
+			routeTrips[trip.RouteID] = []*Trip{}
 		}
 		routeTrips[trip.RouteID] = append(routeTrips[trip.RouteID], trip)
 	}
 
 	shapeAndStops := make(routeShapeAndStopsMap)
 	for routeID, trips := range routeTrips {
-		inboundShapesCounts := make(map[models.Key]models.KeyArray)
-		outboundShapesCounts := make(map[models.Key]models.KeyArray)
+		inboundShapesCounts := make(map[Key]KeyArray)
+		outboundShapesCounts := make(map[Key]KeyArray)
 
 		for _, trip := range trips {
-			if trip.Direction == models.InboundTripDirection {
+			if trip.Direction == InboundTripDirection {
 				inboundShapesCounts[trip.ShapeID] = append(inboundShapesCounts[trip.ShapeID], trip.ID)
 			} else {
 				outboundShapesCounts[trip.ShapeID] = append(outboundShapesCounts[trip.ShapeID], trip.ID)
 			}
 		}
 
-		var mostCommonInboundShapeID models.Key
+		var mostCommonInboundShapeID Key
 		maxInboundCount := -1
 
 		for shapeID, tripIDs := range inboundShapesCounts {
@@ -58,7 +56,7 @@ func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error
 			}
 		}
 
-		var mostCommonOutboundShapeID models.Key
+		var mostCommonOutboundShapeID Key
 		maxOutboundCount := -1
 
 		for shapeID, tripIDs := range outboundShapesCounts {
@@ -68,7 +66,7 @@ func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error
 			}
 		}
 
-		var mostCommonShapeID models.Key
+		var mostCommonShapeID Key
 		if maxInboundCount > maxOutboundCount {
 			mostCommonShapeID = mostCommonInboundShapeID
 		} else {
@@ -79,7 +77,7 @@ func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error
 			continue
 		}
 
-		stopIDs := make(models.KeyArray, 0)
+		stopIDs := make(KeyArray, 0)
 
 		if mostCommonInboundShapeID != "" {
 			for _, tripID := range inboundShapesCounts[mostCommonInboundShapeID] {
@@ -107,7 +105,7 @@ func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error
 
 		shapeAndStops[routeID] = routeShapeAndStops{
 			shapeID: mostCommonShapeID,
-			stopIDs: set.From[models.Key](stopIDs).Slice(),
+			stopIDs: set.From[Key](stopIDs).Slice(),
 		}
 	}
 
@@ -117,9 +115,9 @@ func getRouteShapeAndStops(tripMap models.TripMap) (routeShapeAndStopsMap, error
 // Load GTFS data from a local database file
 func (g *GTFS) FromDB(dbFile string) error {
 	log.Infof("Loading GTFS data from %s", dbFile)
-	db := &internal.GTFSDB{}
-	db.Initialize()
-	version, err := db.Load(dbFile)
+	db := &gtfsdb{}
+	db.initialize()
+	version, err := db.load(dbFile)
 
 	if err != nil {
 		return err
@@ -201,13 +199,13 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		}
 	}
 
-	var agencies models.AgencyMap
-	var routes models.RouteMap
-	var services models.ServiceMap
-	var serviceExceptions models.ServiceExceptionMap
-	var shapes models.ShapeMap
-	var stops models.StopMap
-	var trips models.TripMap
+	var agencies AgencyMap
+	var routes RouteMap
+	var services ServiceMap
+	var serviceExceptions ServiceExceptionMap
+	var shapes ShapeMap
+	var stops StopMap
+	var trips TripMap
 
 	var maxShapeLength int
 
@@ -221,19 +219,19 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		for result := range completion {
 			switch v := result.(type) {
-			case models.AgencyMap:
+			case AgencyMap:
 				agencies = v
-			case models.RouteMap:
+			case RouteMap:
 				routes = v
-			case models.ServiceMap:
+			case ServiceMap:
 				services = v
-			case models.ServiceExceptionMap:
+			case ServiceExceptionMap:
 				serviceExceptions = v
-			case models.ShapeMap:
+			case ShapeMap:
 				shapes = v
-			case models.StopMap:
+			case StopMap:
 				stops = v
-			case models.TripMap:
+			case TripMap:
 				trips = v
 			case int:
 				maxShapeLength = v
@@ -246,7 +244,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error // Declare err within this scope
-		agencies, loadErr = models.ParseAgencies(readers["agency.txt"])
+		agencies, loadErr = ParseAgencies(readers["agency.txt"])
 		log.Debugf("Parsed %d agencies", len(agencies))
 		if loadErr != nil {
 			select { // Non-blocking send to avoid deadlock if errChan is full
@@ -263,7 +261,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error
-		routes, loadErr = models.ParseRoutes(readers["routes.txt"])
+		routes, loadErr = ParseRoutes(readers["routes.txt"])
 		log.Debugf("Parsed %d routes", len(routes))
 		if loadErr != nil {
 			select {
@@ -280,7 +278,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error
-		services, loadErr = models.ParseServices(readers["calendar.txt"])
+		services, loadErr = ParseServices(readers["calendar.txt"])
 		log.Debugf("Parsed %d services", len(services))
 		if loadErr != nil {
 			select {
@@ -303,7 +301,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 			return
 		}
 		var loadErr error
-		serviceExceptions, loadErr = models.ParseServiceExceptions(reader)
+		serviceExceptions, loadErr = ParseServiceExceptions(reader)
 		log.Debugf("Parsed %d service exceptions", len(serviceExceptions))
 		if loadErr != nil {
 			select {
@@ -326,7 +324,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 			return
 		}
 		var loadErr error
-		shapes, maxShapeLength, loadErr = models.ParseShapes(reader)
+		shapes, maxShapeLength, loadErr = ParseShapes(reader)
 		log.Debugf("Parsed %d shapes", len(shapes))
 		if loadErr != nil {
 			select {
@@ -345,7 +343,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error
-		stops, loadErr = models.ParseStops(readers["stops.txt"])
+		stops, loadErr = ParseStops(readers["stops.txt"])
 		log.Debugf("Parsed %d stops", len(stops))
 		if loadErr != nil {
 			select {
@@ -362,7 +360,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	go func() {
 		defer wg.Done()
 		var loadErr error
-		trips, loadErr = models.ParseTrips(readers["trips.txt"], readers["stop_times.txt"])
+		trips, loadErr = ParseTrips(readers["trips.txt"], readers["stop_times.txt"])
 		log.Debugf("Parsed %d trips", len(trips))
 		if loadErr != nil {
 			select {
@@ -407,9 +405,9 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 
 	// Create the GTFS database
 	log.Debugf("Creating GTFS database")
-	db := &internal.GTFSDB{}
-	db.MaxShapeLength = maxShapeLength
-	db.Initialize()
+	db := &gtfsdb{}
+	db.maxShapeLength = maxShapeLength
+	db.initialize()
 
 	// Populate the database with the loaded data
 	log.Debugf("Populating GTFS database")
