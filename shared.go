@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/umahmood/haversine"
 )
@@ -13,19 +12,50 @@ import (
 type Key string
 type KeyArray []Key
 
+func (ka *KeyArray) Append(key Key) {
+	*ka = append(*ka, key)
+}
+
 func (ka KeyArray) MarshalBinary() ([]byte, error) {
-	var serialized []string
-	for _, key := range ka {
-		serialized = append(serialized, string(key))
+	var buf bytes.Buffer
+	// Write the number of keys
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(ka))); err != nil {
+		return nil, err
 	}
-	return []byte(strings.Join(serialized, "|")), nil
+	for _, key := range ka {
+		keyBytes := []byte(key)
+		// Write the length of the key
+		if err := binary.Write(&buf, binary.LittleEndian, uint64(len(keyBytes))); err != nil {
+			return nil, err
+		}
+		// Write the key bytes
+		if _, err := buf.Write(keyBytes); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
 }
 
 func (ka *KeyArray) UnmarshalBinary(data []byte) error {
-	lines := strings.Split(string(data), "|")
-	keys := make([]Key, 0)
-	for _, line := range lines {
-		keys = append(keys, Key(line))
+	buf := bytes.NewReader(data)
+	var arrayLen uint64
+	// Read the number of keys
+	if err := binary.Read(buf, binary.LittleEndian, &arrayLen); err != nil {
+		return err
+	}
+	keys := make([]Key, 0, arrayLen)
+	for i := uint64(0); i < arrayLen; i++ {
+		var keyLen uint64
+		// Read the length of the key
+		if err := binary.Read(buf, binary.LittleEndian, &keyLen); err != nil {
+			return err
+		}
+		keyBytes := make([]byte, keyLen)
+		// Read the key bytes
+		if _, err := buf.Read(keyBytes); err != nil {
+			return err
+		}
+		keys = append(keys, Key(keyBytes))
 	}
 	*ka = keys
 	return nil

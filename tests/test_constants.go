@@ -12,4 +12,7 @@ const (
 	serviceDate = "2025-06-02"
 	stopID      = "12667"
 	tripID      = "5163491"
+
+	routeName = "Yanchep Line"
+	stopName  = "Glendalough Stn"
 )

@@ -29,6 +29,8 @@ func (g *GTFS) Save() error {
 	return g.db.save(g.filePath, g.Version)
 }
 
+// --- Individual Query Functions ---
+
 // Returns the agency with the given ID
 func (g *GTFS) GetAgencyByID(agencyID Key) (*Agency, error) {
 	agency := &Agency{}
@@ -40,28 +42,6 @@ func (g *GTFS) GetAgencyByID(agencyID Key) (*Agency, error) {
 		return nil, err
 	}
 	return agency, nil
-}
-
-// Returns the agency for a given route ID
-func (g *GTFS) GetAgencyByRouteID(routeID Key) (*Agency, error) {
-	var agencyID string
-
-	// Query the database for the agency ID associated with the route
-	err := g.db.routes.QueryKey(string(routeID), func(row column.Row) error {
-		var ok bool
-		agencyID, ok = row.String("agency_id")
-		if !ok {
-			return errors.New("missing agency_id")
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Query the database for the agency with the given ID
-	return g.GetAgencyByID(Key(agencyID))
 }
 
 // Returns the route with the given ID
@@ -77,7 +57,36 @@ func (g *GTFS) GetRouteByID(routeID Key) (*Route, error) {
 	return route, nil
 }
 
-// Returns the agency with the given ID
+// Returns the route with the given name
+func (g *GTFS) GetRouteByName(routeName string) (*Route, error) {
+	var routeID Key
+
+	// Query the database for the route with the given name
+	err := g.db.routesByNameIndex.QueryKey(routeName, func(row column.Row) error {
+		routeIDsAny, ok := row.Record("ids")
+		if !ok {
+			return errors.New("missing route ID")
+		}
+
+		routeIDs, ok := routeIDsAny.(*KeyArray)
+		if !ok {
+			return errors.New("invalid route ID format")
+		}
+
+		if len(*routeIDs) == 0 {
+			return errors.New("no route IDs found")
+		}
+		routeID = (*routeIDs)[0]
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return g.GetRouteByID(routeID)
+}
+
+// Returns the stop with the given ID
 func (g *GTFS) GetStopByID(stopID Key) (*Stop, error) {
 	stop := &Stop{}
 
@@ -90,6 +99,34 @@ func (g *GTFS) GetStopByID(stopID Key) (*Stop, error) {
 	return stop, nil
 }
 
+// Returns the stop with the given name
+func (g *GTFS) GetStopByName(stopName string) (*Stop, error) {
+	var stopID Key
+
+	// Query the database for the stop with the given name
+	err := g.db.stopsByNameIndex.QueryKey(stopName, func(row column.Row) error {
+		stopIDsAny, ok := row.Record("ids")
+		if !ok {
+			return errors.New("missing stop ID")
+		}
+		stopIDs, ok := stopIDsAny.(*KeyArray)
+		if !ok {
+			return errors.New("invalid stop ID format")
+		}
+		if len(*stopIDs) == 0 {
+			return errors.New("no stop IDs found")
+		}
+		stopID = (*stopIDs)[0]
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return g.GetStopByID(stopID)
+}
+
+// Returns the trip with the given ID
 func (g *GTFS) GetTripByID(tripID Key) (*Trip, error) {
 	trip := &Trip{}
 
@@ -104,19 +141,41 @@ func (g *GTFS) GetTripByID(tripID Key) (*Trip, error) {
 
 // Returns all trips for a given route ID
 func (g *GTFS) GetTripsByRouteID(routeID Key) (TripArray, error) {
+	var tripIDs *KeyArray
 	trips := TripArray{}
 
 	// Query the database for all trips associated with the route ID
-	err := g.db.trips.Query(func(txn *column.Txn) error {
-		txnFilter := txn.WithValue("route_id", func(v any) bool {
-			return v == string(routeID)
-		})
-		return trips.Load(txnFilter)
+	err := g.db.tripsByRouteIndex.QueryKey(string(routeID), func(row column.Row) error {
+		tripIDsAny, ok := row.Record("ids")
+		if !ok {
+			return errors.New("missing trip ID")
+		}
+		tripIDs, ok = tripIDsAny.(*KeyArray)
+		if !ok {
+			return errors.New("invalid trip ID format")
+		}
+		if len(*tripIDs) == 0 {
+			return errors.New("no trip IDs found")
+		}
+		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
+
+	// Query the database for each trip ID and load the trip data
+	err = g.db.trips.Query(func(txn *column.Txn) error {
+		for _, tripID := range *tripIDs {
+			trip := &Trip{}
+			err := txn.QueryKey(string(tripID), trip.Load)
+			if err != nil {
+				return err
+			}
+			trips = append(trips, trip)
+		}
+		return nil
+	})
+
 	return trips, nil
 }
 
@@ -147,6 +206,8 @@ func (g *GTFS) GetServiceException(serviceID Key, date time.Time) (*ServiceExcep
 	return exception, nil
 }
 
+// --- Bulk Query Functions ---
+
 // Returns all agencies in the GTFS database
 func (g *GTFS) GetAllAgencies() (AgencyArray, error) {
 	agencies := AgencyArray{}
@@ -167,4 +228,48 @@ func (g *GTFS) GetAllRoutes() (RouteArray, error) {
 		return nil, err
 	}
 	return routes, nil
+}
+
+// Returns all stops in the GTFS database
+func (g *GTFS) GetAllStops() (StopArray, error) {
+	stops := StopArray{}
+	err := g.db.stops.Query(stops.Load)
+
+	if err != nil {
+		return nil, err
+	}
+	return stops, nil
+}
+
+// Returns all trips in the GTFS database
+func (g *GTFS) GetAllTrips() (TripArray, error) {
+	trips := TripArray{}
+	err := g.db.trips.Query(trips.Load)
+
+	if err != nil {
+		return nil, err
+	}
+	return trips, nil
+}
+
+// Returns all services in the GTFS database
+func (g *GTFS) GetAllServices() (ServiceArray, error) {
+	services := ServiceArray{}
+	err := g.db.services.Query(services.Load)
+
+	if err != nil {
+		return nil, err
+	}
+	return services, nil
+}
+
+// Returns all service exceptions in the GTFS database
+func (g *GTFS) GetAllServiceExceptions() (ServiceExceptionArray, error) {
+	exceptions := ServiceExceptionArray{}
+	err := g.db.serviceExceptions.Query(exceptions.Load)
+
+	if err != nil {
+		return nil, err
+	}
+	return exceptions, nil
 }

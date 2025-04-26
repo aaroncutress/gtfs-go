@@ -14,6 +14,7 @@ import (
 const CoordinatesPerRow = 2000
 
 type gtfsdb struct {
+	// GTFS database collections
 	agencies          *column.Collection
 	routes            *column.Collection
 	services          *column.Collection
@@ -21,6 +22,11 @@ type gtfsdb struct {
 	shapes            *column.Collection
 	stops             *column.Collection
 	trips             *column.Collection
+
+	// Index map collections
+	routesByNameIndex *column.Collection
+	stopsByNameIndex  *column.Collection
+	tripsByRouteIndex *column.Collection
 
 	// Metadata
 	maxShapeLength int
@@ -89,6 +95,29 @@ func (db *gtfsdb) initialize() {
 	db.trips.CreateColumn("stops", column.ForRecord(func() *TripStopArray {
 		return new(TripStopArray)
 	}))
+
+	// --- Index Collections ---
+
+	// Initialize routesByNameIndex
+	db.routesByNameIndex = column.NewCollection()
+	db.routesByNameIndex.CreateColumn("name", column.ForKey())
+	db.routesByNameIndex.CreateColumn("ids", column.ForRecord(func() *KeyArray {
+		return new(KeyArray)
+	}))
+
+	// Initialize stopsByNameIndex
+	db.stopsByNameIndex = column.NewCollection()
+	db.stopsByNameIndex.CreateColumn("name", column.ForKey())
+	db.stopsByNameIndex.CreateColumn("ids", column.ForRecord(func() *KeyArray {
+		return new(KeyArray)
+	}))
+
+	// Initialize tripsByRouteIndex
+	db.tripsByRouteIndex = column.NewCollection()
+	db.tripsByRouteIndex.CreateColumn("route_id", column.ForKey())
+	db.tripsByRouteIndex.CreateColumn("ids", column.ForRecord(func() *KeyArray {
+		return new(KeyArray)
+	}))
 }
 
 // load loads the GTFS database from a zip file.
@@ -138,6 +167,12 @@ func (db *gtfsdb) load(filePath string) (int, error) {
 			err = db.stops.Restore(f)
 		case "trips":
 			err = db.trips.Restore(f)
+		case "routes_by_name_index":
+			err = db.routesByNameIndex.Restore(f)
+		case "stops_by_name_index":
+			err = db.stopsByNameIndex.Restore(f)
+		case "trips_by_route_index":
+			err = db.tripsByRouteIndex.Restore(f)
 		default:
 			continue
 		}
@@ -189,13 +224,16 @@ func (db *gtfsdb) save(filePath string, version int) error {
 
 	// Create a new zip file for each collection
 	collections := map[string]*column.Collection{
-		"agencies":           db.agencies,
-		"routes":             db.routes,
-		"services":           db.services,
-		"service_exceptions": db.serviceExceptions,
-		"shapes":             db.shapes,
-		"stops":              db.stops,
-		"trips":              db.trips,
+		"agencies":             db.agencies,
+		"routes":               db.routes,
+		"services":             db.services,
+		"service_exceptions":   db.serviceExceptions,
+		"shapes":               db.shapes,
+		"stops":                db.stops,
+		"trips":                db.trips,
+		"routes_by_name_index": db.routesByNameIndex,
+		"stops_by_name_index":  db.stopsByNameIndex,
+		"trips_by_route_index": db.tripsByRouteIndex,
 	}
 
 	// Write each collection to a separate file in the zip archive
@@ -242,6 +280,11 @@ func (db *gtfsdb) Populate(
 	stops StopMap,
 	trips TripMap,
 ) error {
+	// Create index maps
+	routesByNameIndex := make(map[string]*KeyArray)
+	stopsByNameIndex := make(map[string]*KeyArray)
+	tripsByRouteIndex := make(map[Key]*KeyArray)
+
 	// Populate agencies
 	db.agencies.Query(func(txn *column.Txn) error {
 		for _, agency := range agencies {
@@ -259,6 +302,14 @@ func (db *gtfsdb) Populate(
 			err := txn.InsertKey(string(route.ID), route.Save)
 			if err != nil {
 				return err
+			}
+
+			// Populate routesByNameIndex
+			if route.Name != "" {
+				if _, exists := routesByNameIndex[route.Name]; !exists {
+					routesByNameIndex[route.Name] = new(KeyArray)
+				}
+				routesByNameIndex[route.Name].Append(route.ID)
 			}
 		}
 		return nil
@@ -307,6 +358,14 @@ func (db *gtfsdb) Populate(
 			if err != nil {
 				return err
 			}
+
+			// Populate stopsByNameIndex
+			if stop.Name != "" {
+				if _, exists := stopsByNameIndex[stop.Name]; !exists {
+					stopsByNameIndex[stop.Name] = new(KeyArray)
+				}
+				stopsByNameIndex[stop.Name].Append(stop.ID)
+			}
 		}
 		return nil
 	})
@@ -315,6 +374,54 @@ func (db *gtfsdb) Populate(
 	db.trips.Query(func(txn *column.Txn) error {
 		for _, trip := range trips {
 			err := txn.InsertKey(string(trip.ID), trip.Save)
+			if err != nil {
+				return err
+			}
+
+			// Populate tripsByRouteIndex
+			if trip.RouteID != "" {
+				if _, exists := tripsByRouteIndex[trip.RouteID]; !exists {
+					tripsByRouteIndex[trip.RouteID] = new(KeyArray)
+				}
+				tripsByRouteIndex[trip.RouteID].Append(trip.ID)
+			}
+		}
+		return nil
+	})
+
+	// Populate index collections
+	db.routesByNameIndex.Query(func(txn *column.Txn) error {
+		for name, ids := range routesByNameIndex {
+			err := txn.InsertKey(name, func(row column.Row) error {
+				row.SetRecord("ids", ids)
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	db.stopsByNameIndex.Query(func(txn *column.Txn) error {
+		for name, ids := range stopsByNameIndex {
+			err := txn.InsertKey(name, func(row column.Row) error {
+				row.SetRecord("ids", ids)
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	db.tripsByRouteIndex.Query(func(txn *column.Txn) error {
+		for routeID, ids := range tripsByRouteIndex {
+			err := txn.InsertKey(string(routeID), func(row column.Row) error {
+				row.SetRecord("ids", ids)
+				return nil
+			})
 			if err != nil {
 				return err
 			}
