@@ -19,6 +19,7 @@ var requiredFiles = []string{
 // Represents a GTFS database connection
 type GTFS struct {
 	Version int
+	Created time.Time
 
 	filePath string
 	db       *gtfsdb

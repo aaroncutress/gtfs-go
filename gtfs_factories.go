@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/hashicorp/go-set/v3"
@@ -419,7 +420,9 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	// Save the database to the file
 	g.db = db
 	g.filePath = dbFile
+
 	g.Version = CurrentVersion
+	g.Created = time.Now().UTC()
 
 	log.Debugf("Saving GTFS database to %s", dbFile)
 	err = g.Save()

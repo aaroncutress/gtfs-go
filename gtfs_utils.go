@@ -21,6 +21,8 @@ func hasDay(flags WeekdayFlag, day time.Weekday) bool {
 
 // Returns the trips that are running at the given time with a buffer, from the given array
 func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer time.Duration) (TripArray, error) {
+	t = RemoveTimezone(t)
+
 	truncated := t.Truncate(24 * time.Hour)
 	nextT := t.Add(24 * time.Hour)
 	weekday := truncated.Weekday()
@@ -88,7 +90,7 @@ func (g *GTFS) GetCurrentTripsAt(trips TripArray, t time.Time) (TripArray, error
 
 // Returns the trips that are currently running from the given array
 func (g *GTFS) GetCurrentTrips(trips TripArray) (TripArray, error) {
-	return g.GetCurrentTripsWithBuffer(trips, time.Now().UTC(), 0)
+	return g.GetCurrentTripsWithBuffer(trips, time.Now(), 0)
 }
 
 // Returns all trips that are currently running
@@ -99,5 +101,5 @@ func (g *GTFS) GetAllCurrentTrips() (TripArray, error) {
 		return nil, err
 	}
 
-	return g.GetCurrentTripsWithBuffer(trips, time.Now().UTC(), 0)
+	return g.GetCurrentTripsWithBuffer(trips, time.Now(), 0)
 }
