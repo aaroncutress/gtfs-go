@@ -19,19 +19,8 @@ func hasDay(flags WeekdayFlag, day time.Weekday) bool {
 	return (flags & dayFlag) != 0
 }
 
-// Returns all trips that are currently running at the given time with a buffer
-func (g *GTFS) GetCurrentTripsWithBuffer(t time.Time, buffer time.Duration) (TripArray, error) {
-	// Get all trips from the database
-	log.Debug("Fetching all trips from the database")
-
-	var trips TripArray
-	err := g.db.trips.Query(trips.Load)
-	if err != nil {
-		return nil, err
-	}
-
-	log.Debugf("Fetched and decoded %d trips", len(trips))
-
+// Returns the trips that are running at the given time with a buffer, from the given array
+func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer time.Duration) (TripArray, error) {
 	truncated := t.Truncate(24 * time.Hour)
 	nextT := t.Add(24 * time.Hour)
 	weekday := truncated.Weekday()
@@ -92,12 +81,23 @@ func (g *GTFS) GetCurrentTripsWithBuffer(t time.Time, buffer time.Duration) (Tri
 	return currentTrips, nil
 }
 
-// Returns all trips that are currently running at the given time
-func (g *GTFS) GetCurrentTripsAt(t time.Time) (TripArray, error) {
-	return g.GetCurrentTripsWithBuffer(t, 0)
+// Returns the trips that are running at the given time from the given array
+func (g *GTFS) GetCurrentTripsAt(trips TripArray, t time.Time) (TripArray, error) {
+	return g.GetCurrentTripsWithBuffer(trips, t, 0)
+}
+
+// Returns the trips that are currently running from the given array
+func (g *GTFS) GetCurrentTrips(trips TripArray) (TripArray, error) {
+	return g.GetCurrentTripsWithBuffer(trips, time.Now().UTC(), 0)
 }
 
 // Returns all trips that are currently running
 func (g *GTFS) GetAllCurrentTrips() (TripArray, error) {
-	return g.GetCurrentTripsAt(time.Now().UTC())
+	// Fetch all trips from the GTFS database
+	trips, err := g.GetAllTrips()
+	if err != nil {
+		return nil, err
+	}
+
+	return g.GetCurrentTripsWithBuffer(trips, time.Now().UTC(), 0)
 }
