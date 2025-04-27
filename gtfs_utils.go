@@ -19,8 +19,8 @@ func hasDay(flags WeekdayFlag, day time.Weekday) bool {
 	return (flags & dayFlag) != 0
 }
 
-// Returns all trips that are currently running at the given time
-func (g *GTFS) GetCurrentTripsAt(t time.Time) (TripArray, error) {
+// Returns all trips that are currently running at the given time with a buffer
+func (g *GTFS) GetCurrentTripsWithBuffer(t time.Time, buffer time.Duration) (TripArray, error) {
 	// Get all trips from the database
 	log.Debug("Fetching all trips from the database")
 
@@ -37,6 +37,8 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (TripArray, error) {
 	weekday := truncated.Weekday()
 
 	currentTrips := make(TripArray, len(trips))
+	intervalStart := t.Add(-buffer)
+	intervalEnd := t.Add(buffer)
 	total := 0
 
 	log.Debug("Checking each trip for current status")
@@ -55,12 +57,12 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (TripArray, error) {
 			intersectsOnNextDay = nextT.After(tripStart) && nextT.Before(tripEnd)
 		}
 
-		// Check if the trip is running
-		if (tripStart.After(t) || tripEnd.Before(t)) && !intersectsOnNextDay {
+		// Check if the trip is running in the buffered time
+		if !(intervalStart.Before(tripEnd) && intervalEnd.After(tripStart)) && !intersectsOnNextDay {
 			continue
 		}
 
-		// Check if the trip is running on the given day
+		// Check if the trip is running on the current day
 		running, ok := runningCache[trip.ServiceID]
 		if !ok {
 			service, err := g.GetServiceByID(trip.ServiceID)
@@ -78,18 +80,21 @@ func (g *GTFS) GetCurrentTripsAt(t time.Time) (TripArray, error) {
 			runningCache[trip.ServiceID] = running
 		}
 
-		// Skip the trip if it's not running today
 		if !running {
 			continue
 		}
 
-		// Add the trip to the current trips list
 		currentTrips[total] = trip
 		total++
 	}
 
 	currentTrips = currentTrips[:total]
 	return currentTrips, nil
+}
+
+// Returns all trips that are currently running at the given time
+func (g *GTFS) GetCurrentTripsAt(t time.Time) (TripArray, error) {
+	return g.GetCurrentTripsWithBuffer(t, 0)
 }
 
 // Returns all trips that are currently running
