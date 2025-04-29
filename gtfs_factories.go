@@ -118,7 +118,7 @@ func (g *GTFS) FromDB(dbFile string) error {
 	log.Infof("Loading GTFS data from %s", dbFile)
 	db := &gtfsdb{}
 	db.initialize()
-	version, err := db.load(dbFile)
+	version, created, err := db.load(dbFile)
 
 	if err != nil {
 		return err
@@ -126,6 +126,7 @@ func (g *GTFS) FromDB(dbFile string) error {
 	g.db = db
 	g.filePath = dbFile
 	g.Version = version
+	g.Created = created
 
 	return nil
 }
@@ -422,7 +423,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	g.filePath = dbFile
 
 	g.Version = CurrentVersion
-	g.Created = time.Now().UTC()
+	g.Created = time.Now().Unix()
 
 	log.Debugf("Saving GTFS database to %s", dbFile)
 	err = g.Save()

@@ -10,9 +10,10 @@ import (
 
 // Represents an agency that provides transit services
 type Agency struct {
-	ID   Key
-	Name string
-	URL  string
+	ID       Key
+	Name     string
+	URL      string
+	Timezone string
 }
 type AgencyArray []*Agency
 type AgencyMap map[Key]*Agency
@@ -21,6 +22,7 @@ type AgencyMap map[Key]*Agency
 func (a Agency) Save(r column.Row) error {
 	r.SetString("name", a.Name)
 	r.SetString("url", a.URL)
+	r.SetString("timezone", a.Timezone)
 	return nil
 }
 
@@ -29,15 +31,17 @@ func (a *Agency) Load(r column.Row) error {
 	key, keyOk := r.Key()
 	name, nameOk := r.String("name")
 	url, urlOk := r.String("url")
+	timezone, timezoneOk := r.String("timezone")
 
-	if !keyOk || !nameOk || !urlOk {
+	if !keyOk || !nameOk || !urlOk || !timezoneOk {
 		return errors.New("missing required fields")
 	}
 
 	*a = Agency{
-		ID:   Key(key),
-		Name: name,
-		URL:  url,
+		ID:       Key(key),
+		Name:     name,
+		URL:      url,
+		Timezone: timezone,
 	}
 	return nil
 }
@@ -47,6 +51,7 @@ func (aa *AgencyArray) Load(txn *column.Txn) error {
 	idCol := txn.Key()
 	nameCol := txn.String("name")
 	urlCol := txn.String("url")
+	timezoneCol := txn.String("timezone")
 
 	count := txn.Count()
 	if count == 0 {
@@ -60,16 +65,18 @@ func (aa *AgencyArray) Load(txn *column.Txn) error {
 		id, idOk := idCol.Get()
 		name, nameOk := nameCol.Get()
 		url, urlOk := urlCol.Get()
+		timezone, timezoneOk := timezoneCol.Get()
 
-		if !idOk || !nameOk || !urlOk {
+		if !idOk || !nameOk || !urlOk || !timezoneOk {
 			e = errors.New("missing required fields")
 			return
 		}
 
 		(*aa)[i] = &Agency{
-			ID:   Key(id),
-			Name: name,
-			URL:  url,
+			ID:       Key(id),
+			Name:     name,
+			URL:      url,
+			Timezone: timezone,
 		}
 		i++
 	})
@@ -103,11 +110,13 @@ func ParseAgencies(file io.Reader) (AgencyMap, error) {
 		id := Key(record[0])
 		name := record[1]
 		url := record[2]
+		timezone := record[3]
 
 		agencies[id] = &Agency{
-			ID:   id,
-			Name: name,
-			URL:  url,
+			ID:       id,
+			Name:     name,
+			URL:      url,
+			Timezone: timezone,
 		}
 	}
 

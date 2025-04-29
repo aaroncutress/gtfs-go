@@ -39,6 +39,7 @@ func (db *gtfsdb) initialize() {
 	db.agencies.CreateColumn("id", column.ForKey())
 	db.agencies.CreateColumn("name", column.ForString())
 	db.agencies.CreateColumn("url", column.ForString())
+	db.agencies.CreateColumn("timezone", column.ForString())
 
 	// Initialize routes
 	db.routes = column.NewCollection()
@@ -121,33 +122,33 @@ func (db *gtfsdb) initialize() {
 }
 
 // load loads the GTFS database from a zip file.
-func (db *gtfsdb) load(filePath string) (int, error) {
+func (db *gtfsdb) load(filePath string) (int, int64, error) {
 	// Initialize the database schema
 	db.initialize()
 
 	// Open the zip file
 	zipFile, err := os.Open(filePath)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer zipFile.Close()
 
 	fileStat, err := zipFile.Stat()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	// Create a new zip reader
 	zipReader, err := zip.NewReader(zipFile, fileStat.Size())
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	for _, file := range zipReader.File {
 		// Open the file in the zip archive
 		f, err := file.Open()
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		defer f.Close()
 
@@ -178,41 +179,47 @@ func (db *gtfsdb) load(filePath string) (int, error) {
 		}
 
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
 
 	// Load the metadata file
 	metadataFile, err := zipReader.Open("metadata.json")
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer metadataFile.Close()
 
 	metadata := make(map[string]any)
 	err = json.NewDecoder(metadataFile).Decode(&metadata)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	versionF, ok := metadata["version"].(float64)
 	if !ok {
-		return 0, errors.New("invalid metadata version")
+		return 0, 0, errors.New("invalid metadata version")
 	}
 	version := int(versionF)
 
+	createdF, ok := metadata["created"].(float64)
+	if !ok {
+		return 0, 0, errors.New("invalid metadata created")
+	}
+	created := int64(createdF)
+
 	maxShapeLengthF, ok := metadata["max_shape_length"].(float64)
 	if !ok {
-		return 0, errors.New("invalid metadata max_shape_length")
+		return 0, 0, errors.New("invalid metadata max_shape_length")
 	}
 	maxShapeLength := int(maxShapeLengthF)
 	db.maxShapeLength = maxShapeLength
 
-	return version, nil
+	return version, created, nil
 }
 
 // save saves the GTFS database to a zip file.
-func (db *gtfsdb) save(filePath string, version int) error {
+func (db *gtfsdb) save(filePath string, version int, created int64) error {
 	zipFile, err := os.Create(filePath)
 	if err != nil {
 		return err
@@ -256,6 +263,7 @@ func (db *gtfsdb) save(filePath string, version int) error {
 	}
 	metadata := map[string]any{
 		"version":          version,
+		"created":          created,
 		"max_shape_length": db.maxShapeLength,
 	}
 	metadataJSON, err := json.Marshal(metadata)

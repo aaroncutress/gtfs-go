@@ -21,35 +21,47 @@ func hasDay(flags WeekdayFlag, day time.Weekday) bool {
 
 // Returns the trips that are running at the given time with a buffer, from the given array
 func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer time.Duration) (TripArray, error) {
-	t = RemoveTimezone(t)
-
-	truncated := t.Truncate(24 * time.Hour)
-	nextT := t.Add(24 * time.Hour)
-	weekday := truncated.Weekday()
-
 	currentTrips := make(TripArray, len(trips))
-	intervalStart := t.Add(-buffer)
-	intervalEnd := t.Add(buffer)
 	total := 0
 
 	log.Debug("Checking each trip for current status")
 
+	if len(trips) == 0 {
+		log.Debug("No trips to check")
+		return currentTrips[:total], nil
+	}
+
+	route, err := g.GetRouteByID(trips[0].RouteID)
+	if err != nil {
+		log.Errorf("Failed to get route by ID: %v", err)
+		return nil, err
+	}
+
+	agency, err := g.GetAgencyByID(route.AgencyID)
+	if err != nil {
+		log.Errorf("Failed to get agency by ID: %v", err)
+		return nil, err
+	}
+
+	timezone, err := time.LoadLocation(agency.Timezone)
+	if err != nil {
+		log.Errorf("Failed to load timezone: %v", err)
+		return nil, err
+	}
+
+	t = t.In(timezone)
+	tSeconds := t.Hour()*3600 + t.Minute()*60 + t.Second()
+
+	intervalStart := tSeconds - int(buffer.Seconds())
+	intervalEnd := tSeconds + int(buffer.Seconds())
+
+	weekday := t.Weekday()
+
 	runningCache := make(map[Key]bool) // service id -> running
 	for _, trip := range trips {
-		// Get the trip start and end times
-		tripStart := truncated.Add(time.Duration(trip.StartTime()) * time.Second)
-		endSeconds := trip.EndTime()
-		tripEnd := truncated.Add(time.Duration(endSeconds) * time.Second)
-
-		// Adjust for midnight crossing
-		tripCrossesMidnight := endSeconds > secondsInDay
-		intersectsOnNextDay := false
-		if tripCrossesMidnight {
-			intersectsOnNextDay = nextT.After(tripStart) && nextT.Before(tripEnd)
-		}
-
-		// Check if the trip is running in the buffered time
-		if !(intervalStart.Before(tripEnd) && intervalEnd.After(tripStart)) && !intersectsOnNextDay {
+		// Check if the trip is within the time interval
+		if int(trip.StartTime()%secondsInDay) > intervalEnd ||
+			int(trip.EndTime()%secondsInDay) < intervalStart {
 			continue
 		}
 
@@ -60,7 +72,7 @@ func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer ti
 			if err != nil {
 				return nil, err
 			}
-			exception, _ := g.GetServiceException(trip.ServiceID, truncated)
+			exception, _ := g.GetServiceException(trip.ServiceID, t)
 
 			if hasDay(service.Weekdays, weekday) {
 				running = exception == nil || exception.Type != RemovedExceptionType

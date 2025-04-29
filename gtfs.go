@@ -19,7 +19,7 @@ var requiredFiles = []string{
 // Represents a GTFS database connection
 type GTFS struct {
 	Version int
-	Created time.Time
+	Created int64
 
 	filePath string
 	db       *gtfsdb
@@ -27,7 +27,7 @@ type GTFS struct {
 
 // Save the GTFS database to the file
 func (g *GTFS) Save() error {
-	return g.db.save(g.filePath, g.Version)
+	return g.db.save(g.filePath, g.Version, g.Created)
 }
 
 // --- Individual Query Functions ---
