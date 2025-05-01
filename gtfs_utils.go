@@ -19,16 +19,37 @@ func hasDay(flags WeekdayFlag, day time.Weekday) bool {
 	return (flags & dayFlag) != 0
 }
 
+func isTripWithinInterval(tripStartTime, tripEndTime, tSeconds, bufferSeconds int) bool {
+	// Normalize trip times to potentially span beyond secondsInDay if crossing midnight
+	normTripStart := tripStartTime
+	normTripEnd := tripEndTime
+	if tripEndTime < tripStartTime {
+		normTripEnd = tripEndTime + secondsInDay
+	}
+
+	// Define the linear interval around tSeconds
+	intervalStart := tSeconds - bufferSeconds
+	intervalEnd := tSeconds + bufferSeconds
+
+	// Overlap with the trip in the current window aligned with the interval
+	overlapCurrent := max(intervalStart, normTripStart) <= min(intervalEnd, normTripEnd)
+
+	// Overlap with the trip shifted back one day
+	overlapPreviousDay := max(intervalStart, normTripStart-secondsInDay) <= min(intervalEnd, normTripEnd-secondsInDay)
+
+	// Overlap with the trip shifted forward one day
+	overlapNextDay := max(intervalStart, normTripStart+secondsInDay) <= min(intervalEnd, normTripEnd+secondsInDay)
+
+	return overlapCurrent || overlapPreviousDay || overlapNextDay
+}
+
 // Returns the trips that are running at the given time with a buffer, from the given array
 func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer time.Duration) (TripArray, error) {
-	currentTrips := make(TripArray, len(trips))
-	total := 0
-
-	log.Debug("Checking each trip for current status")
+	currentTrips := make(TripArray, 0, len(trips))
 
 	if len(trips) == 0 {
 		log.Debug("No trips to check")
-		return currentTrips[:total], nil
+		return currentTrips, nil
 	}
 
 	route, err := g.GetRouteByID(trips[0].RouteID)
@@ -52,19 +73,10 @@ func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer ti
 	t = t.In(timezone)
 	tSeconds := t.Hour()*3600 + t.Minute()*60 + t.Second()
 
-	intervalStart := tSeconds - int(buffer.Seconds())
-	intervalEnd := tSeconds + int(buffer.Seconds())
-
 	weekday := t.Weekday()
 
 	runningCache := make(map[Key]bool) // service id -> running
 	for _, trip := range trips {
-		// Check if the trip is within the time interval
-		if int(trip.StartTime()%secondsInDay) > intervalEnd ||
-			int(trip.EndTime()%secondsInDay) < intervalStart {
-			continue
-		}
-
 		// Check if the trip is running on the current day
 		running, ok := runningCache[trip.ServiceID]
 		if !ok {
@@ -87,17 +99,31 @@ func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer ti
 			continue
 		}
 
-		currentTrips[total] = trip
-		total++
+		// Check if the trip is within the time interval
+		if !isTripWithinInterval(
+			int(trip.StartTime()%secondsInDay),
+			int(trip.EndTime()%secondsInDay),
+			int(tSeconds),
+			int(buffer.Seconds())) {
+			continue
+		}
+
+		currentTrips = append(currentTrips, trip)
 	}
 
-	currentTrips = currentTrips[:total]
 	return currentTrips, nil
 }
 
 // Returns the trips that are running at the given time from the given array
 func (g *GTFS) GetCurrentTripsAt(trips TripArray, t time.Time) (TripArray, error) {
 	return g.GetCurrentTripsWithBuffer(trips, t, 0)
+}
+
+// Returns the trips that are running between the given start and end times from the given array
+func (g *GTFS) GetCurrentTripsBetween(trips TripArray, start, end time.Time) (TripArray, error) {
+	buffer := end.Sub(start) / 2
+	middle := start.Add(buffer)
+	return g.GetCurrentTripsWithBuffer(trips, middle, buffer)
 }
 
 // Returns the trips that are currently running from the given array
