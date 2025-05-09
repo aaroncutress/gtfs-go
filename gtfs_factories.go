@@ -118,7 +118,6 @@ func getRouteShapeAndStops(tripMap TripMap) (routeShapeAndStopsMap, error) {
 func (g *GTFS) FromDB(dbFile string) error {
 	log.Infof("Loading GTFS data from %s", dbFile)
 	db := &gtfsdb{}
-	db.initialize()
 	version, created, err := db.load(dbFile)
 
 	if err != nil {

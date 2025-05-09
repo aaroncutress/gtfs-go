@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"os"
 	"strconv"
@@ -125,9 +126,6 @@ func (db *gtfsdb) initialize() {
 
 // load loads the GTFS database from a zip file.
 func (db *gtfsdb) load(filePath string) (int, int64, error) {
-	// Initialize the database schema
-	db.initialize()
-
 	// Open the zip file
 	zipFile, err := os.Open(filePath)
 	if err != nil {
@@ -146,6 +144,9 @@ func (db *gtfsdb) load(filePath string) (int, int64, error) {
 		return 0, 0, err
 	}
 
+	var agenciesF, routesF, servicesF, serviceExceptionsF, shapesF, stopsF, tripsF *io.ReadCloser
+	var routesByNameIndexF, stopsByNameIndexF, tripsByRouteIndexF *io.ReadCloser
+
 	for _, file := range zipReader.File {
 		// Open the file in the zip archive
 		f, err := file.Open()
@@ -157,31 +158,37 @@ func (db *gtfsdb) load(filePath string) (int, int64, error) {
 		// Load the file into the appropriate collection
 		switch file.Name {
 		case "agencies":
-			err = db.agencies.Restore(f)
+			// err = db.agencies.Restore(f)
+			agenciesF = &f
 		case "routes":
-			err = db.routes.Restore(f)
+			// err = db.routes.Restore(f)
+			routesF = &f
 		case "services":
-			err = db.services.Restore(f)
+			// err = db.services.Restore(f)
+			servicesF = &f
 		case "service_exceptions":
-			err = db.serviceExceptions.Restore(f)
+			// err = db.serviceExceptions.Restore(f)
+			serviceExceptionsF = &f
 		case "shapes":
-			err = db.shapes.Restore(f)
+			// err = db.shapes.Restore(f)
+			shapesF = &f
 		case "stops":
-			err = db.stops.Restore(f)
+			// err = db.stops.Restore(f)
+			stopsF = &f
 		case "trips":
-			err = db.trips.Restore(f)
+			// err = db.trips.Restore(f)
+			tripsF = &f
 		case "routes_by_name_index":
-			err = db.routesByNameIndex.Restore(f)
+			// err = db.routesByNameIndex.Restore(f)
+			routesByNameIndexF = &f
 		case "stops_by_name_index":
-			err = db.stopsByNameIndex.Restore(f)
+			// err = db.stopsByNameIndex.Restore(f)
+			stopsByNameIndexF = &f
 		case "trips_by_route_index":
-			err = db.tripsByRouteIndex.Restore(f)
+			// err = db.tripsByRouteIndex.Restore(f)
+			tripsByRouteIndexF = &f
 		default:
 			continue
-		}
-
-		if err != nil {
-			return 0, 0, err
 		}
 	}
 
@@ -217,6 +224,71 @@ func (db *gtfsdb) load(filePath string) (int, int64, error) {
 	maxShapeLength := int(maxShapeLengthF)
 	db.maxShapeLength = maxShapeLength
 	db.numShapeRows = int(math.Ceil(float64(maxShapeLength) / float64(CoordinatesPerRow)))
+
+	// Initialize the database schema
+	db.initialize()
+
+	// Restore the collections from the zip file
+	if agenciesF != nil {
+		err = db.agencies.Restore(*agenciesF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if routesF != nil {
+		err = db.routes.Restore(*routesF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if servicesF != nil {
+		err = db.services.Restore(*servicesF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if serviceExceptionsF != nil {
+		err = db.serviceExceptions.Restore(*serviceExceptionsF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if shapesF != nil {
+		err = db.shapes.Restore(*shapesF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if stopsF != nil {
+		err = db.stops.Restore(*stopsF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if tripsF != nil {
+		err = db.trips.Restore(*tripsF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if routesByNameIndexF != nil {
+		err = db.routesByNameIndex.Restore(*routesByNameIndexF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if stopsByNameIndexF != nil {
+		err = db.stopsByNameIndex.Restore(*stopsByNameIndexF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if tripsByRouteIndexF != nil {
+		err = db.tripsByRouteIndex.Restore(*tripsByRouteIndexF)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
 
 	return version, created, nil
 }
