@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -409,6 +410,7 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 	log.Debugf("Creating GTFS database")
 	db := &gtfsdb{}
 	db.maxShapeLength = maxShapeLength
+	db.numShapeRows = int(math.Ceil(float64(maxShapeLength) / float64(CoordinatesPerRow)))
 	db.initialize()
 
 	// Populate the database with the loaded data
