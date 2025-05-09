@@ -30,6 +30,9 @@ type gtfsdb struct {
 
 	// Metadata
 	maxShapeLength int
+
+	// Calculated fields
+	numShapeRows int
 }
 
 // Initalize the GTFS database schema
@@ -68,8 +71,7 @@ func (db *gtfsdb) initialize() {
 	// Initialize shapes
 	db.shapes = column.NewCollection()
 	db.shapes.CreateColumn("id", column.ForKey())
-	numRows := int(math.Ceil(float64(db.maxShapeLength) / float64(CoordinatesPerRow)))
-	for i := range numRows {
+	for i := range db.numShapeRows {
 		db.shapes.CreateColumn("coordinates"+strconv.Itoa(i), column.ForRecord(func() *CoordinateArray {
 			return new(CoordinateArray)
 		}))
@@ -214,6 +216,7 @@ func (db *gtfsdb) load(filePath string) (int, int64, error) {
 	}
 	maxShapeLength := int(maxShapeLengthF)
 	db.maxShapeLength = maxShapeLength
+	db.numShapeRows = int(math.Ceil(float64(maxShapeLength) / float64(CoordinatesPerRow)))
 
 	return version, created, nil
 }

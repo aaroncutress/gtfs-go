@@ -207,6 +207,21 @@ func (g *GTFS) GetServiceException(serviceID Key, date time.Time) (*ServiceExcep
 	return exception, nil
 }
 
+// Returns the shape with the given ID
+func (g *GTFS) GetShapeByID(shapeID Key) (*Shape, error) {
+	shape := &Shape{}
+
+	// Query the database for the shape with the given ID
+	err := g.db.shapes.QueryKey(string(shapeID), func(row column.Row) error {
+		return shape.Load(row, g.db.numShapeRows)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return shape, nil
+}
+
 // --- Bulk Query Functions ---
 
 // Returns all agencies in the GTFS database
