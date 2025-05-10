@@ -1,13 +1,12 @@
 package gtfs
 
 import (
+	"encoding/binary"
 	"encoding/csv"
 	"errors"
 	"io"
 	"strconv"
 	"time"
-
-	"github.com/kelindar/column"
 )
 
 // Flag for each day of the week
@@ -33,93 +32,69 @@ type Service struct {
 type ServiceMap map[Key]*Service
 type ServiceArray []*Service
 
-// Saves a service to the database
-func (s Service) Save(row column.Row) error {
-	row.SetUint("weekdays", uint(s.Weekdays))
-	row.SetString("start_date", s.StartDate.Format("20060102"))
-	row.SetString("end_date", s.EndDate.Format("20060102"))
-	return nil
+// Encode serializes the Service struct (excluding ID) into a byte slice.
+// Format:
+// - Weekdays: 1 byte (bitmask for each day of the week)
+// - StartDate: 8 bytes (Unix timestamp)
+// - EndDate: 8 bytes (Unix timestamp)
+func (s Service) Encode() []byte {
+	// Calculate total length
+	// 1 byte for Weekdays + 8 bytes for StartDate + 8 bytes for EndDate
+	totalLen := uint8Bytes + timeBytes + timeBytes
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal Weekdays
+	data[offset] = byte(s.Weekdays)
+	offset += 1
+
+	// Marshal StartDate as Unix timestamp (int64)
+	binary.BigEndian.PutUint64(data[offset:], uint64(s.StartDate.Unix()))
+	offset += timeBytes
+
+	// Marshal EndDate as Unix timestamp (int64)
+	binary.BigEndian.PutUint64(data[offset:], uint64(s.EndDate.Unix()))
+	// offset += timeBytes // Not strictly needed for the last field
+
+	return data
 }
 
-// Loads a service from the database
-func (s *Service) Load(row column.Row) error {
-	key, keyOk := row.Key()
-	weekdays, weekdaysOk := row.Uint("weekdays")
-	startDateStr, startDateOk := row.String("start_date")
-	endDateStr, endDateOk := row.String("end_date")
-
-	if !keyOk || !weekdaysOk || !startDateOk || !endDateOk {
-		return errors.New("missing required fields")
+// Decode deserializes the byte slice into the Service struct.
+func (s *Service) Decode(id Key, data []byte) error {
+	if s == nil {
+		return errors.New("cannot decode into a nil Service")
 	}
+	offset := 0
 
-	startDate, err := time.ParseInLocation("20060102", startDateStr, time.UTC)
-	if err != nil {
-		return err
+	// Set ID from parameter
+	s.ID = id
+
+	// Unmarshal Weekdays
+	if offset+1 > len(data) {
+		return errors.New("service buffer too small for Weekdays")
 	}
-	endDate, err := time.ParseInLocation("20060102", endDateStr, time.UTC)
-	if err != nil {
-		return err
+	s.Weekdays = WeekdayFlag(data[offset])
+	offset += 1
+
+	// Unmarshal StartDate
+	if offset+timeBytes > len(data) {
+		return errors.New("service buffer too small for StartDate")
 	}
+	startDateUnix := int64(binary.BigEndian.Uint64(data[offset:]))
+	s.StartDate = time.Unix(startDateUnix, 0).UTC() // Store as UTC, or choose a specific location
+	offset += timeBytes
 
-	*s = Service{
-		ID:        Key(key),
-		Weekdays:  WeekdayFlag(weekdays),
-		StartDate: startDate.UTC(),
-		EndDate:   endDate.UTC(),
+	// Unmarshal EndDate
+	if offset+timeBytes > len(data) {
+		return errors.New("service buffer too small for EndDate")
 	}
-	return nil
-}
+	endDateUnix := int64(binary.BigEndian.Uint64(data[offset:]))
+	s.EndDate = time.Unix(endDateUnix, 0).UTC() // Store as UTC, or choose a specific location
+	offset += timeBytes
 
-// Loads all services from the database transaction
-func (sa *ServiceArray) Load(txn *column.Txn) error {
-	idCol := txn.Key()
-	weekdaysCol := txn.Uint("weekdays")
-	startDateStrCol := txn.String("start_date")
-	endDateStrCol := txn.String("end_date")
-
-	count := txn.Count()
-	if count == 0 {
-		return nil
-	}
-	*sa = make(ServiceArray, count)
-
-	var e error
-	i := 0
-	err := txn.Range(func(idx uint32) {
-		id, idOk := idCol.Get()
-		weekdays, weekdaysOk := weekdaysCol.Get()
-		startDateStr, startDateOk := startDateStrCol.Get()
-		endDateStr, endDateOk := endDateStrCol.Get()
-
-		if !idOk || !weekdaysOk || !startDateOk || !endDateOk {
-			e = errors.New("missing required fields")
-			return
-		}
-
-		startDate, err := time.ParseInLocation("20060102", startDateStr, time.UTC)
-		if err != nil {
-			e = err
-			return
-		}
-		endDate, err := time.ParseInLocation("20060102", endDateStr, time.UTC)
-		if err != nil {
-			e = err
-			return
-		}
-
-		(*sa)[i] = &Service{
-			ID:        Key(id),
-			Weekdays:  WeekdayFlag(weekdays),
-			StartDate: startDate,
-			EndDate:   endDate,
-		}
-		i++
-	})
-	if err != nil {
-		return err
-	}
-	if e != nil {
-		return e
+	// Check if all data was consumed
+	if offset != len(data) {
+		return errors.New("service buffer not fully consumed, trailing data exists")
 	}
 
 	return nil

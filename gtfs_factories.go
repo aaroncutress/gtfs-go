@@ -5,18 +5,18 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/hashicorp/go-set/v3"
 	"resty.dev/v3"
-)
 
-const CurrentVersion = 1
+	bolt "go.etcd.io/bbolt"
+)
 
 // Temporary struct to hold the shape ID and stop IDs for each route
 type routeShapeAndStops struct {
@@ -117,33 +117,59 @@ func getRouteShapeAndStops(tripMap TripMap) (routeShapeAndStopsMap, error) {
 // Load GTFS data from a local database file
 func (g *GTFS) FromDB(dbFile string) error {
 	log.Infof("Loading GTFS data from %s", dbFile)
-	db := &gtfsdb{}
-	version, created, err := db.load(dbFile)
+
+	db, err := bolt.Open(dbFile, 0600, &bolt.Options{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+
+	g.db = db
+
+	err = g.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("metadata"))
+		if b == nil {
+			return errors.New("metadata bucket not found")
+		}
+
+		version := b.Get([]byte("version"))
+		if version == nil {
+			return errors.New("version not found in metadata")
+		}
+		versionInt, err := strconv.Atoi(string(version))
+		if err != nil {
+			return err
+		}
+
+		if versionInt != CurrentVersion {
+			return errors.New("GTFS database version mismatch: expected " + strconv.Itoa(CurrentVersion) + ", got " + strconv.Itoa(versionInt))
+		}
+
+		created := b.Get([]byte("created"))
+		if created == nil {
+			return errors.New("created timestamp not found in metadata")
+		}
+
+		createdInt, err := strconv.ParseInt(string(created), 10, 64)
+		if err != nil {
+			return err
+		}
+
+		g.Version = versionInt
+		g.Created = createdInt
+
+		return nil
+	})
 
 	if err != nil {
 		return err
 	}
-	g.db = db
-	g.filePath = dbFile
-	g.Version = version
-	g.Created = created
 
+	log.Debugf("Loaded GTFS data from %s", dbFile)
 	return nil
 }
 
 // Construct a new GTFS database from a hosted GTFS URL
 func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
-	// Create the database file
-	dirPath := filepath.Dir(dbFile)
-	err := os.MkdirAll(dirPath, 0755)
-	if err != nil {
-		return err
-	}
-	_, err = os.Create(dbFile)
-	if err != nil {
-		return err
-	}
-
 	// Download the GTFS data from the URL
 	log.Infof("Downloading GTFS data from %s", gtfsURL)
 
@@ -405,29 +431,63 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		routes[routeID] = route
 	}
 
-	// Create the GTFS database
-	log.Debugf("Creating GTFS database")
-	db := &gtfsdb{}
-	db.maxShapeLength = maxShapeLength
-	db.numShapeRows = int(math.Ceil(float64(maxShapeLength) / float64(CoordinatesPerRow)))
-	db.initialize()
-
-	// Populate the database with the loaded data
-	log.Debugf("Populating GTFS database")
-	err = db.Populate(agencies, routes, services, serviceExceptions, shapes, stops, trips)
+	// Initialize the GTFS database
+	log.Debugf("Initializing GTFS database at %s", dbFile)
+	err = initDB(dbFile, agencies, routes, services, serviceExceptions, shapes, stops, trips)
 	if err != nil {
 		return err
 	}
 
-	// Save the database to the file
-	g.db = db
-	g.filePath = dbFile
+	return g.FromDB(dbFile)
+}
 
-	g.Version = CurrentVersion
-	g.Created = time.Now().Unix()
+// Initialize a GTFS database from loaded data
+func initDB(
+	dbFile string,
+	agencies AgencyMap,
+	routes RouteMap,
+	services ServiceMap,
+	serviceExceptions ServiceExceptionMap,
+	shapes ShapeMap,
+	stops StopMap,
+	trips TripMap,
+) error {
+	// Create the database file
+	dirPath := filepath.Dir(dbFile)
+	err := os.MkdirAll(dirPath, 0755)
+	if err != nil {
+		return err
+	}
 
-	log.Debugf("Saving GTFS database to %s", dbFile)
-	err = g.Save()
+	// Open the database file
+	db, err := bolt.Open(dbFile, 0600, nil)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Populate the database with the loaded data
+	err = Populate(db, agencies, routes, services, serviceExceptions, shapes, stops, trips)
+	if err != nil {
+		return err
+	}
+
+	// Save metadata to the database
+	err = db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte("metadata"))
+		if err != nil {
+			return err
+		}
+		err = b.Put([]byte("version"), []byte(strconv.Itoa(CurrentVersion)))
+		if err != nil {
+			return err
+		}
+		err = b.Put([]byte("created"), []byte(strconv.Itoa(int(time.Now().Unix()))))
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}

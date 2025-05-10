@@ -25,6 +25,11 @@ func TestMain(m *testing.M) {
 	exitCode := m.Run()
 
 	// Clean up the test database
+	err = g.Close()
+	if err != nil {
+		log.Errorf("Failed to close GTFS: %v", err)
+	}
+
 	if err := os.Remove(dbFile); err != nil {
 		log.Errorf("Failed to remove test database: %v", err)
 	}

@@ -6,8 +6,6 @@ import (
 	"github.com/charmbracelet/log"
 )
 
-const secondsInDay = 24 * 60 * 60
-
 // Check if a given weekday is present in the flags
 func hasDay(flags WeekdayFlag, day time.Weekday) bool {
 	if day < time.Sunday || day > time.Saturday {
@@ -87,9 +85,9 @@ func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer ti
 			exception, _ := g.GetServiceException(trip.ServiceID, t)
 
 			if hasDay(service.Weekdays, weekday) {
-				running = exception == nil || exception.Type != RemovedExceptionType
+				running = exception == nil || !bool(exception.Type)
 			} else {
-				running = exception != nil && exception.Type == AddedExceptionType
+				running = exception != nil && bool(exception.Type)
 			}
 
 			runningCache[trip.ServiceID] = running

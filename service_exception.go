@@ -1,20 +1,20 @@
 package gtfs
 
 import (
+	"encoding/binary"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"io"
 	"time"
-
-	"github.com/kelindar/column"
 )
 
 // Enum for the types of service exception
-type ExceptionType uint8
+type ExceptionType bool
 
 const (
-	AddedExceptionType ExceptionType = iota + 1
-	RemovedExceptionType
+	AddedExceptionType   ExceptionType = false
+	RemovedExceptionType ExceptionType = true
 )
 
 // Represents an exception for a service on a specific date
@@ -26,78 +26,86 @@ type ServiceException struct {
 type ServiceExceptionMap map[Key]*ServiceException
 type ServiceExceptionArray []*ServiceException
 
-// Saves a service exception to the database
-func (se ServiceException) Save(row column.Row) error {
-	row.SetUint("type", uint(se.Type))
-	return nil
+// Encode serializes the ServiceException struct into a byte slice.
+// Format:
+// - ServiceID: 4-byte length + UTF-8 string
+// - Date: 8 bytes (Unix timestamp)
+// - Type: 1 byte (bool as uint8)
+func (se ServiceException) Encode() []byte {
+	serviceIDStr := string(se.ServiceID)
+
+	// Calculate total length
+	totalLen := lenBytes + len(serviceIDStr) + // ServiceID
+		timeBytes + // Date
+		boolBytes // Type
+
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal ServiceID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(serviceIDStr)))
+	offset += lenBytes
+	copy(data[offset:], serviceIDStr)
+	offset += len(serviceIDStr)
+
+	// Marshal Date as Unix timestamp (int64)
+	binary.BigEndian.PutUint64(data[offset:], uint64(se.Date.Unix()))
+	offset += timeBytes
+
+	// Marshal Type (bool as uint8)
+	if se.Type {
+		data[offset] = 1
+	} else {
+		data[offset] = 0
+	}
+	// offset += boolBytes // Not strictly needed for the last field
+
+	return data
 }
 
-// Loads a service exception from the database
-func (se *ServiceException) Load(row column.Row) error {
-	key, keyOk := row.Key()
-	typeInt, typeIntOk := row.Uint("type")
-
-	if !keyOk || !typeIntOk {
-		return errors.New("missing required fields")
+// Decode deserializes the byte slice into the ServiceException struct.
+func (se *ServiceException) Decode(data []byte) error {
+	if se == nil {
+		return errors.New("cannot decode into a nil ServiceException")
 	}
+	offset := 0
 
-	service_id := key[:len(key)-8]
-	dateStr := key[len(key)-8:]
-	date, err := time.ParseInLocation("20060102", dateStr, time.UTC)
-	if err != nil {
-		return err
+	// Unmarshal ServiceID
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for ServiceID length")
 	}
-
-	*se = ServiceException{
-		ServiceID: Key(service_id),
-		Date:      date,
-		Type:      ExceptionType(typeInt),
+	serviceIDLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(serviceIDLen) > len(data) {
+		return errors.New("buffer too small for ServiceID content")
 	}
-	return nil
-}
+	se.ServiceID = Key(data[offset : offset+int(serviceIDLen)])
+	offset += int(serviceIDLen)
 
-// Loads all service exceptions from the database transaction
-func (sea *ServiceExceptionArray) Load(txn *column.Txn) error {
-	keyCol := txn.Key()
-	typeCol := txn.Uint("type")
-
-	count := txn.Count()
-	if count == 0 {
-		return nil
+	// Unmarshal Date
+	if offset+timeBytes > len(data) {
+		return errors.New("buffer too small for Date")
 	}
-	*sea = make(ServiceExceptionArray, count)
+	dateUnix := int64(binary.BigEndian.Uint64(data[offset:]))
+	se.Date = time.Unix(dateUnix, 0).UTC() // Store as UTC, or choose a specific location
+	offset += timeBytes
 
-	var e error
-	i := 0
-	err := txn.Range(func(idx uint32) {
-		key, keyOk := keyCol.Get()
-		typeInt, typeIntOk := typeCol.Get()
-
-		if !keyOk || !typeIntOk {
-			e = errors.New("missing required fields")
-			return
-		}
-
-		serviceID := key[:len(key)-8]
-		date := key[len(key)-8:]
-		exceptionDate, err := time.ParseInLocation("20060102", date, time.UTC)
-		if err != nil {
-			e = err
-			return
-		}
-
-		(*sea)[i] = &ServiceException{
-			ServiceID: Key(serviceID),
-			Date:      exceptionDate,
-			Type:      ExceptionType(typeInt),
-		}
-		i++
-	})
-	if err != nil {
-		return err
+	// Unmarshal Type
+	if offset+boolBytes > len(data) {
+		return errors.New("buffer too small for Type")
 	}
-	if e != nil {
-		return e
+	if data[offset] == 1 {
+		se.Type = true
+	} else if data[offset] == 0 {
+		se.Type = false
+	} else {
+		return fmt.Errorf("invalid byte value for bool (Type): got %d, want 0 or 1", data[offset])
+	}
+	offset += boolBytes
+
+	// Check if all data was consumed
+	if offset != len(data) {
+		return errors.New("buffer not fully consumed, trailing data exists")
 	}
 
 	return nil

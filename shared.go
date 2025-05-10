@@ -1,10 +1,10 @@
 package gtfs
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/umahmood/haversine"
 )
@@ -16,48 +16,71 @@ func (ka *KeyArray) Append(key Key) {
 	*ka = append(*ka, key)
 }
 
-func (ka KeyArray) MarshalBinary() ([]byte, error) {
-	var buf bytes.Buffer
-	// Write the number of keys
-	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(ka))); err != nil {
-		return nil, err
+// Encodes the KeyArray into a byte slice
+// Format:
+// - Count: 4 bytes (number of keys)
+// - Each key: 4 bytes (length of the key) + UTF-8 string
+func (ka KeyArray) Encode() []byte {
+	// Calculate total length correctly
+	totalLen := lenBytes // For the count of keys
+	for _, k := range ka {
+		totalLen += lenBytes + len(string(k)) // len(string(k)) for the key content
 	}
-	for _, key := range ka {
-		keyBytes := []byte(key)
-		// Write the length of the key
-		if err := binary.Write(&buf, binary.LittleEndian, uint64(len(keyBytes))); err != nil {
-			return nil, err
-		}
-		// Write the key bytes
-		if _, err := buf.Write(keyBytes); err != nil {
-			return nil, err
-		}
+
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal count
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(ka)))
+	offset += lenBytes
+
+	// Marshal keys
+	for _, k := range ka {
+		keyStr := string(k)
+		binary.BigEndian.PutUint32(data[offset:], uint32(len(keyStr)))
+		offset += lenBytes
+		copy(data[offset:], keyStr)
+		offset += len(keyStr)
 	}
-	return buf.Bytes(), nil
+	return data
 }
 
-func (ka *KeyArray) UnmarshalBinary(data []byte) error {
-	buf := bytes.NewReader(data)
-	var arrayLen uint64
-	// Read the number of keys
-	if err := binary.Read(buf, binary.LittleEndian, &arrayLen); err != nil {
-		return err
+// Decodes the byte slice into the KeyArray
+func (ka *KeyArray) Decode(data []byte) error {
+	if ka == nil {
+		return errors.New("cannot decode into a nil KeyArray")
 	}
-	keys := make([]Key, 0, arrayLen)
-	for i := uint64(0); i < arrayLen; i++ {
-		var keyLen uint64
-		// Read the length of the key
-		if err := binary.Read(buf, binary.LittleEndian, &keyLen); err != nil {
-			return err
-		}
-		keyBytes := make([]byte, keyLen)
-		// Read the key bytes
-		if _, err := buf.Read(keyBytes); err != nil {
-			return err
-		}
-		keys = append(keys, Key(keyBytes))
+	offset := 0
+
+	// Unmarshal count
+	if offset+lenBytes > len(data) {
+		return errors.New("keyarray buffer too small for count")
 	}
-	*ka = keys
+	count := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+
+	// Unmarshal keys
+	// Use a temporary slice to build, then assign to *ka to handle if *ka was non-nil
+	tempKa := make(KeyArray, count)
+	for i := uint32(0); i < count; i++ {
+		if offset+lenBytes > len(data) {
+			return fmt.Errorf("keyarray buffer too small for key %d length", i)
+		}
+		keyLen := binary.BigEndian.Uint32(data[offset:])
+		offset += lenBytes
+
+		if offset+int(keyLen) > len(data) {
+			return fmt.Errorf("keyarray buffer too small for key %d content", i)
+		}
+		tempKa[i] = Key(data[offset : offset+int(keyLen)])
+		offset += int(keyLen)
+	}
+	*ka = tempKa // Assign the newly decoded slice
+
+	// Check if all data was consumed
+	if offset != len(data) {
+		return errors.New("keyarray buffer not fully consumed, trailing data exists")
+	}
 	return nil
 }
 
@@ -111,49 +134,105 @@ func (c Coordinate) DistanceTo(other Coordinate) float64 {
 	return km
 }
 
-type CoordinateArray []Coordinate
+// Encode the Coordinate into a byte slice
+// Format:
+// - Latitude: 8 bytes (float64)
+// - Longitude: 8 bytes (float64)
+func (c Coordinate) Encode() []byte {
+	data := make([]byte, float64Bytes*2) // 8 bytes for lat + 8 bytes for lon
+	offset := 0
 
-func (ca CoordinateArray) MarshalBinary() ([]byte, error) {
-	buf := new(bytes.Buffer)
-	count := uint32(len(ca))
-
-	if err := binary.Write(buf, binary.LittleEndian, count); err != nil {
-		return nil, err
-	}
-
-	for _, coord := range ca {
-		if err := binary.Write(buf, binary.LittleEndian, coord.Latitude); err != nil {
-			return nil, err
-		}
-		if err := binary.Write(buf, binary.LittleEndian, coord.Longitude); err != nil {
-			return nil, err
-		}
-	}
-
-	return buf.Bytes(), nil
+	binary.BigEndian.PutUint64(data[offset:], math.Float64bits(c.Latitude))
+	offset += float64Bytes
+	binary.BigEndian.PutUint64(data[offset:], math.Float64bits(c.Longitude))
+	return data
 }
 
-func (ca *CoordinateArray) UnmarshalBinary(data []byte) error {
-	reader := bytes.NewReader(data)
-
-	var count uint32
-	if err := binary.Read(reader, binary.LittleEndian, &count); err != nil {
-		return err
+// Decode the byte slice into a Coordinate
+func (c *Coordinate) Decode(data []byte) error {
+	if c == nil {
+		return errors.New("cannot decode into a nil Coordinate")
 	}
+	if len(data) < float64Bytes*2 {
+		return errors.New("coordinate buffer too small")
+	}
+	offset := 0
 
-	*ca = make(CoordinateArray, count)
+	c.Latitude = math.Float64frombits(binary.BigEndian.Uint64(data[offset:]))
+	offset += float64Bytes
+	c.Longitude = math.Float64frombits(binary.BigEndian.Uint64(data[offset:]))
+	offset += float64Bytes
+
+	// Check if all data was consumed (optional for fixed-size struct if called with exact slice)
+	if offset != len(data) {
+		return errors.New("coordinate buffer not fully consumed, trailing data exists")
+	}
+	return nil
+}
+
+type CoordinateArray []Coordinate
+
+// Encode the CoordinateArray into a byte slice
+// Format:
+// - Count: 4 bytes (number of coordinates)
+// - Each coordinate: 8 bytes (float64 for latitude) + 8 bytes (float64 for longitude)
+func (ca CoordinateArray) Encode() []byte {
+	// Calculate total length: 4 bytes for count + (count * size_of_coordinate_encoding)
+	// Size of each coordinate encoding is float64Bytes * 2
+	coordSize := float64Bytes * 2
+	totalLen := lenBytes + (len(ca) * coordSize)
+
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal count
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(ca)))
+	offset += lenBytes
+
+	// Marshal each coordinate
+	for _, coord := range ca {
+		coordBytes := coord.Encode() // This already creates a slice of coordSize
+		copy(data[offset:], coordBytes)
+		offset += coordSize
+	}
+	return data
+}
+
+// Decode the byte slice into the CoordinateArray
+func (ca *CoordinateArray) Decode(data []byte) error {
+	if ca == nil {
+		return errors.New("cannot decode into a nil CoordinateArray")
+	}
+	offset := 0
+
+	// Unmarshal count
+	if offset+lenBytes > len(data) {
+		return errors.New("coordinatearray buffer too small for count")
+	}
+	count := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+
+	// Unmarshal coordinates
+	coordSize := float64Bytes * 2
+	tempCa := make(CoordinateArray, count)
 	for i := uint32(0); i < count; i++ {
-		if err := binary.Read(reader, binary.LittleEndian, &(*ca)[i].Latitude); err != nil {
-			return err
+		if offset+coordSize > len(data) {
+			return fmt.Errorf("coordinatearray buffer too small for coordinate %d", i)
 		}
-		if err := binary.Read(reader, binary.LittleEndian, &(*ca)[i].Longitude); err != nil {
-			return err
+		var coord Coordinate
+		// Pass the exact slice for the current coordinate to its Decode method
+		err := coord.Decode(data[offset : offset+coordSize])
+		if err != nil {
+			return fmt.Errorf("failed to decode coordinate %d: %w", i, err)
 		}
+		tempCa[i] = coord
+		offset += coordSize
 	}
+	*ca = tempCa
 
-	if reader.Len() > 0 {
-		return errors.New("extra data after unmarshalling")
+	// Check if all data was consumed
+	if offset != len(data) {
+		return errors.New("coordinatearray buffer not fully consumed, trailing data exists")
 	}
-
 	return nil
 }

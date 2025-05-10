@@ -1,27 +1,25 @@
 package gtfs
 
 import (
+	"encoding/binary"
 	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strconv"
-	"strings"
-
-	"github.com/kelindar/column"
 )
 
-type TripDirection uint8
-type TripTimepoint uint8
+type TripDirection bool
+type TripTimepoint bool
 
 const (
-	OutboundTripDirection TripDirection = iota
-	InboundTripDirection
+	OutboundTripDirection TripDirection = false
+	InboundTripDirection  TripDirection = true
 )
 const (
-	ApproximateTripTimepoint TripTimepoint = iota
-	ExactTripTimepoint
+	ApproximateTripTimepoint TripTimepoint = false
+	ExactTripTimepoint       TripTimepoint = true
 )
 
 // Represents a stop in a trip
@@ -32,62 +30,179 @@ type TripStop struct {
 	Timepoint     TripTimepoint `json:"timepoint"`
 }
 
-// Converts the TripStop to a string representation
-func (ts *TripStop) String() string {
-	return fmt.Sprintf("%s,%d,%d,%d", ts.StopID, ts.ArrivalTime, ts.DepartureTime, ts.Timepoint)
+// Encodes the TripStop struct into a byte slice
+// Format:
+// - StopID: 4-byte length + UTF-8 string
+// - ArrivalTime: 4 bytes (uint32)
+// - DepartureTime: 4 bytes (uint32)
+// - Timepoint: 1 byte (bool as uint8)
+func (ts *TripStop) Encode() []byte {
+	stopIDStr := string(ts.StopID)
+
+	// Calculate total length
+	totalLen := lenBytes + len(stopIDStr) + // StopID
+		uint32Bytes + // ArrivalTime
+		uint32Bytes + // DepartureTime
+		boolBytes // Timepoint
+
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal StopID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(stopIDStr)))
+	offset += lenBytes
+	copy(data[offset:], stopIDStr)
+	offset += len(stopIDStr)
+
+	// Marshal ArrivalTime (as uint32)
+	binary.BigEndian.PutUint32(data[offset:], uint32(ts.ArrivalTime))
+	offset += uint32Bytes
+
+	// Marshal DepartureTime (as uint32)
+	binary.BigEndian.PutUint32(data[offset:], uint32(ts.DepartureTime))
+	offset += uint32Bytes
+
+	// Marshal Timepoint (bool as uint8)
+	if ts.Timepoint {
+		data[offset] = 1
+	} else {
+		data[offset] = 0
+	}
+
+	return data
 }
 
-// Converts a string representation back to a TripStop
-func (ts *TripStop) FromString(s string) error {
-	parts := strings.Split(s, ",")
-	if len(parts) != 4 {
-		return errors.New("invalid TripStop string format")
+// Decodes the byte slice into the TripStop struct
+func (ts *TripStop) Decode(data []byte) error {
+	if ts == nil {
+		return errors.New("cannot decode into a nil TripStop")
 	}
+	offset := 0
 
-	stopID := Key(parts[0])
-	arrivalTime, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return err
+	// Unmarshal StopID
+	if offset+lenBytes > len(data) {
+		return errors.New("tripstop buffer too small for StopID length")
 	}
-	departureTime, err := strconv.Atoi(parts[2])
-	if err != nil {
-		return err
+	stopIDLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(stopIDLen) > len(data) {
+		return errors.New("tripstop buffer too small for StopID content")
 	}
-	timepointInt, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return err
-	}
+	ts.StopID = Key(data[offset : offset+int(stopIDLen)])
+	offset += int(stopIDLen)
 
-	ts.StopID = stopID
-	ts.ArrivalTime = uint(arrivalTime)
-	ts.DepartureTime = uint(departureTime)
-	ts.Timepoint = TripTimepoint(timepointInt)
+	// Unmarshal ArrivalTime
+	if offset+uint32Bytes > len(data) {
+		return errors.New("tripstop buffer too small for ArrivalTime")
+	}
+	ts.ArrivalTime = uint(binary.BigEndian.Uint32(data[offset:]))
+	offset += uint32Bytes
+
+	// Unmarshal DepartureTime
+	if offset+uint32Bytes > len(data) {
+		return errors.New("tripstop buffer too small for DepartureTime")
+	}
+	ts.DepartureTime = uint(binary.BigEndian.Uint32(data[offset:]))
+	offset += uint32Bytes
+
+	// Unmarshal Timepoint
+	if offset+boolBytes > len(data) {
+		return errors.New("tripstop buffer too small for Timepoint")
+	}
+	if data[offset] == 1 {
+		ts.Timepoint = true
+	} else if data[offset] == 0 {
+		ts.Timepoint = false
+	} else {
+		return fmt.Errorf("invalid byte value for bool (Timepoint): got %d, want 0 or 1", data[offset])
+	}
+	offset += boolBytes
+
+	// Check if all data was consumed
+	if offset != len(data) {
+		return errors.New("tripstop buffer not fully consumed, trailing data exists")
+	}
 	return nil
 }
 
 type TripStopArray []*TripStop
 
-func (tsa TripStopArray) MarshalBinary() ([]byte, error) {
-	var serialized []string
-	for _, stop := range tsa {
-		serialized = append(serialized, stop.String())
+// Encode the TripStopArray into a byte slice
+// Format:
+// - Count: 4 bytes (uint32)
+// - Each TripStop (see TripStop.Encode)
+func (tsa TripStopArray) Encode() []byte {
+	var totalLen int = lenBytes // Start with count length
+	var encodedStops [][]byte   // Store individually encoded stops to avoid re-encoding
+
+	for _, ts := range tsa {
+		tripStopBytes := ts.Encode()
+		encodedStops = append(encodedStops, tripStopBytes)
+		totalLen += lenBytes + len(tripStopBytes)
 	}
-	return []byte(strings.Join(serialized, "|")), nil
+
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal count
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(tsa))) // Use original length of tsa
+	offset += lenBytes
+
+	// Marshal each TripStop
+	for _, tripStopBytes := range encodedStops {
+		binary.BigEndian.PutUint32(data[offset:], uint32(len(tripStopBytes)))
+		offset += lenBytes
+		copy(data[offset:], tripStopBytes)
+		offset += len(tripStopBytes)
+	}
+	return data
 }
 
-func (tsa *TripStopArray) UnmarshalBinary(data []byte) error {
-	lines := strings.Split(string(data), "|")
-	stops := make([]*TripStop, 0)
-	for _, line := range lines {
-		stop := &TripStop{}
-		err := stop.FromString(line)
-		if err != nil {
-			return err
-		}
-		stops = append(stops, stop)
+// Decode the byte slice into the TripStopArray
+func (tsa *TripStopArray) Decode(data []byte) error {
+	if tsa == nil {
+		return errors.New("cannot decode into a nil TripStopArray")
 	}
+	offset := 0
 
-	*tsa = stops
+	// Unmarshal count
+	if offset+lenBytes > len(data) {
+		return errors.New("tripstoparray buffer too small for count")
+	}
+	count := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+
+	// Unmarshal TripStops
+	tempTsa := make(TripStopArray, count)
+	for i := uint32(0); i < count; i++ {
+		// Unmarshal length of the current TripStop's data
+		if offset+lenBytes > len(data) {
+			return fmt.Errorf("tripstoparray buffer too small for TripStop %d data length", i)
+		}
+		tripStopDataLen := binary.BigEndian.Uint32(data[offset:])
+		offset += lenBytes
+
+		// Unmarshal the TripStop's data
+		if offset+int(tripStopDataLen) > len(data) {
+			return fmt.Errorf("tripstoparray buffer too small for TripStop %d content (expected %d bytes)", i, tripStopDataLen)
+		}
+
+		currentTripStopData := data[offset : offset+int(tripStopDataLen)]
+
+		var tripStop TripStop                       // Create a value
+		err := tripStop.Decode(currentTripStopData) // Decode into the value
+		if err != nil {
+			return fmt.Errorf("failed to decode TripStop %d: %w", i, err)
+		}
+		tempTsa[i] = &tripStop // Store pointer to the decoded value
+		offset += int(tripStopDataLen)
+	}
+	*tsa = tempTsa
+
+	// Check if all data was consumed
+	if offset != len(data) {
+		return errors.New("tripstoparray buffer not fully consumed, trailing data exists")
+	}
 	return nil
 }
 
@@ -110,104 +225,153 @@ type Trip struct {
 type TripMap map[Key]*Trip
 type TripArray []*Trip
 
-// Saves the trip to the database
-func (t Trip) Save(row column.Row) error {
-	row.SetString("route_id", string(t.RouteID))
-	row.SetString("service_id", string(t.ServiceID))
-	row.SetString("shape_id", string(t.ShapeID))
-	row.SetUint("direction", uint(t.Direction))
-	row.SetString("headsign", t.Headsign)
-	row.SetRecord("stops", t.Stops)
+// Encode the Trip struct into a byte slice
+// Format:
+// - RouteID: 4-byte length + UTF-8 string
+// - ServiceID: 4-byte length + UTF-8 string
+// - ShapeID: 4-byte length + UTF-8 string
+// - Direction: 1 byte (bool as uint8)
+// - Headsign: 4-byte length + UTF-8 string
+// - Stops: TripStopArray (see TripStopArray.Encode)
+func (t Trip) Encode() []byte {
+	routeIDStr := string(t.RouteID)
+	serviceIDStr := string(t.ServiceID)
+	shapeIDStr := string(t.ShapeID)
+	headsignStr := t.Headsign
 
-	return nil
+	stopsBytes := t.Stops.Encode()
+
+	// Calculate total length
+	totalLen := lenBytes + len(routeIDStr) + // RouteID
+		lenBytes + len(serviceIDStr) + // ServiceID
+		lenBytes + len(shapeIDStr) + // ShapeID
+		boolBytes + // Direction
+		lenBytes + len(headsignStr) + // Headsign
+		len(stopsBytes) // Encoded Stops data
+
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal RouteID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(routeIDStr)))
+	offset += lenBytes
+	copy(data[offset:], routeIDStr)
+	offset += len(routeIDStr)
+
+	// Marshal ServiceID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(serviceIDStr)))
+	offset += lenBytes
+	copy(data[offset:], serviceIDStr)
+	offset += len(serviceIDStr)
+
+	// Marshal ShapeID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(shapeIDStr)))
+	offset += lenBytes
+	copy(data[offset:], shapeIDStr)
+	offset += len(shapeIDStr)
+
+	// Marshal Direction
+	if t.Direction {
+		data[offset] = 1
+	} else {
+		data[offset] = 0
+	}
+	offset += boolBytes
+
+	// Marshal Headsign
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(headsignStr)))
+	offset += lenBytes
+	copy(data[offset:], headsignStr)
+	offset += len(headsignStr)
+
+	// Append encoded Stops data
+	copy(data[offset:], stopsBytes)
+	// offset += len(stopsBytes) // Not strictly needed as it's the last part
+
+	return data
 }
 
-// Loads the trip from the database
-func (t *Trip) Load(row column.Row) error {
-	key, keyOk := row.Key()
-	routeID, routeIDOk := row.String("route_id")
-	serviceID, serviceIDOk := row.String("service_id")
-	shapeID, shapeIDOk := row.String("shape_id")
-	directionInt, directionIntOk := row.Uint("direction")
-	headSign, headSignOk := row.String("headsign")
-	stopsAny, stopsStrOk := row.Record("stops")
-
-	if !keyOk || !routeIDOk || !serviceIDOk || !shapeIDOk || !directionIntOk || !headSignOk || !stopsStrOk {
-		return errors.New("missing required fields")
+// Decode the byte slice into the Trip struct
+func (t *Trip) Decode(id Key, data []byte) error {
+	if t == nil {
+		return errors.New("cannot decode into a nil Trip")
 	}
+	offset := 0
 
-	stops, ok := stopsAny.(*TripStopArray)
-	if !ok {
-		return errors.New("invalid stops format")
+	// Set ID from parameter
+	t.ID = id
+
+	// Unmarshal RouteID
+	if offset+lenBytes > len(data) {
+		return errors.New("trip buffer too small for RouteID length")
 	}
-
-	*t = Trip{
-		ID:        Key(key),
-		RouteID:   Key(routeID),
-		ServiceID: Key(serviceID),
-		ShapeID:   Key(shapeID),
-		Direction: TripDirection(directionInt),
-		Headsign:  headSign,
-		Stops:     *stops,
+	routeIDLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(routeIDLen) > len(data) {
+		return errors.New("trip buffer too small for RouteID content")
 	}
-	return nil
-}
+	t.RouteID = Key(data[offset : offset+int(routeIDLen)])
+	offset += int(routeIDLen)
 
-// Loads all trips from the database transaction
-func (ta *TripArray) Load(txn *column.Txn) error {
-	idCol := txn.Key()
-	routeIDCol := txn.String("route_id")
-	serviceIDCol := txn.String("service_id")
-	shapeIDCol := txn.String("shape_id")
-	directionCol := txn.Uint("direction")
-	headSignCol := txn.String("headsign")
-	stopsCol := txn.Record("stops")
-
-	count := txn.Count()
-	if count == 0 {
-		return nil
+	// Unmarshal ServiceID
+	if offset+lenBytes > len(data) {
+		return errors.New("trip buffer too small for ServiceID length")
 	}
-	*ta = make(TripArray, count)
+	serviceIDLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(serviceIDLen) > len(data) {
+		return errors.New("trip buffer too small for ServiceID content")
+	}
+	t.ServiceID = Key(data[offset : offset+int(serviceIDLen)])
+	offset += int(serviceIDLen)
 
-	var e error
-	i := 0
-	err := txn.Range(func(idx uint32) {
-		id, idOk := idCol.Get()
-		routeID, routeIDOk := routeIDCol.Get()
-		serviceID, serviceIDOk := serviceIDCol.Get()
-		shapeID, shapeIDOk := shapeIDCol.Get()
-		directionInt, directionIntOk := directionCol.Get()
-		headSign, headSignOk := headSignCol.Get()
-		stopsAny, stopsStrOk := stopsCol.Get()
+	// Unmarshal ShapeID
+	if offset+lenBytes > len(data) {
+		return errors.New("trip buffer too small for ShapeID length")
+	}
+	shapeIDLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(shapeIDLen) > len(data) {
+		return errors.New("trip buffer too small for ShapeID content")
+	}
+	t.ShapeID = Key(data[offset : offset+int(shapeIDLen)])
+	offset += int(shapeIDLen)
 
-		if !idOk || !routeIDOk || !serviceIDOk || !shapeIDOk || !directionIntOk || !headSignOk || !stopsStrOk {
-			e = errors.New("missing required fields")
-			return
-		}
+	// Unmarshal Direction
+	if offset+boolBytes > len(data) {
+		return errors.New("trip buffer too small for Direction")
+	}
+	if data[offset] == 1 {
+		t.Direction = true
+	} else if data[offset] == 0 {
+		t.Direction = false
+	} else {
+		return fmt.Errorf("invalid byte value for bool (Direction): got %d, want 0 or 1", data[offset])
+	}
+	offset += boolBytes
 
-		stops, ok := stopsAny.(*TripStopArray)
-		if !ok {
-			e = errors.New("invalid stops format")
-			return
-		}
+	// Unmarshal Headsign
+	if offset+lenBytes > len(data) {
+		return errors.New("trip buffer too small for Headsign length")
+	}
+	headsignLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(headsignLen) > len(data) {
+		return errors.New("trip buffer too small for Headsign content")
+	}
+	t.Headsign = string(data[offset : offset+int(headsignLen)])
+	offset += int(headsignLen)
 
-		(*ta)[i] = &Trip{
-			ID:        Key(id),
-			RouteID:   Key(routeID),
-			ServiceID: Key(serviceID),
-			ShapeID:   Key(shapeID),
-			Direction: TripDirection(directionInt),
-			Headsign:  headSign,
-			Stops:     *stops,
-		}
-		i++
-	})
+	// The rest of the data belongs to Stops
+	if offset > len(data) {
+		return errors.New("offset beyond data length before decoding Stops")
+	}
+	stopsData := data[offset:]
+	err := t.Stops.Decode(stopsData)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to decode Stops for Trip: %w", err)
 	}
-	if e != nil {
-		return e
-	}
+	// Trip.Decode has processed all parts. TripStopArray.Decode ensures its data is consumed.
 	return nil
 }
 
@@ -266,9 +430,15 @@ func ParseTrips(tripsFile io.Reader, stopTimesFile io.Reader) (TripMap, error) {
 
 		timepointInt, err := strconv.Atoi(record[7])
 		if err != nil {
-			timepointInt = int(ExactTripTimepoint)
+			timepointInt = 0 // Default to 0 if conversion fails
 		}
-		timepoint := TripTimepoint(timepointInt)
+		// timepoint := TripTimepoint(timepointInt)
+		var timepoint TripTimepoint
+		if timepointInt == 0 {
+			timepoint = ApproximateTripTimepoint
+		} else {
+			timepoint = ExactTripTimepoint
+		}
 
 		sequenceInt, err := strconv.Atoi(record[0])
 		if err != nil {
@@ -311,7 +481,12 @@ func ParseTrips(tripsFile io.Reader, stopTimesFile io.Reader) (TripMap, error) {
 		if err != nil {
 			return nil, err
 		}
-		direction := TripDirection(directionInt)
+		var direction TripDirection
+		if directionInt == 0 {
+			direction = OutboundTripDirection
+		} else {
+			direction = InboundTripDirection
+		}
 		headSign := record[4]
 
 		trip := &Trip{

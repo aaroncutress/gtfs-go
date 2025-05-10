@@ -1,11 +1,10 @@
 package gtfs
 
 import (
+	"encoding/binary"
 	"encoding/csv"
 	"errors"
 	"io"
-
-	"github.com/kelindar/column"
 )
 
 // Represents an agency that provides transit services
@@ -18,76 +17,93 @@ type Agency struct {
 type AgencyArray []*Agency
 type AgencyMap map[Key]*Agency
 
-// Saves an agency to the database
-func (a Agency) Save(r column.Row) error {
-	r.SetString("name", a.Name)
-	r.SetString("url", a.URL)
-	r.SetString("timezone", a.Timezone)
-	return nil
+// Encode serializes the Agency struct (excluding ID) into a byte slice.
+// Format:
+// - Name: 4-byte length + UTF-8 string
+// - URL: 4-byte length + UTF-8 string
+// - Timezone: 4-byte length + UTF-8 string
+func (a Agency) Encode() []byte {
+	// This assumes ID is handled separately or not part of this particular encoding
+	nameStr := a.Name
+	urlStr := a.URL
+	timezoneStr := a.Timezone
+
+	totalLen := lenBytes + len(nameStr) +
+		lenBytes + len(urlStr) +
+		lenBytes + len(timezoneStr)
+
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal Name
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(nameStr)))
+	offset += lenBytes
+	copy(data[offset:], nameStr)
+	offset += len(nameStr)
+
+	// Marshal URL
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(urlStr)))
+	offset += lenBytes
+	copy(data[offset:], urlStr)
+	offset += len(urlStr)
+
+	// Marshal Timezone
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(timezoneStr)))
+	offset += lenBytes
+	copy(data[offset:], timezoneStr)
+	// offset += len(timezoneStr) // Not strictly needed for the last field
+
+	return data
 }
 
-// Loads an agency from the database
-func (a *Agency) Load(r column.Row) error {
-	key, keyOk := r.Key()
-	name, nameOk := r.String("name")
-	url, urlOk := r.String("url")
-	timezone, timezoneOk := r.String("timezone")
-
-	if !keyOk || !nameOk || !urlOk || !timezoneOk {
-		return errors.New("missing required fields")
+// Decode deserializes the byte slice into the Agency struct.
+func (a *Agency) Decode(id Key, data []byte) error {
+	if a == nil {
+		return errors.New("cannot decode into a nil Agency")
 	}
+	offset := 0
 
-	*a = Agency{
-		ID:       Key(key),
-		Name:     name,
-		URL:      url,
-		Timezone: timezone,
+	a.ID = id // Set ID from parameter
+
+	// Unmarshal Name
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for Agency Name length")
 	}
-	return nil
-}
-
-// Loads all agencies from the database transaction
-func (aa *AgencyArray) Load(txn *column.Txn) error {
-	idCol := txn.Key()
-	nameCol := txn.String("name")
-	urlCol := txn.String("url")
-	timezoneCol := txn.String("timezone")
-
-	count := txn.Count()
-	if count == 0 {
-		return nil
+	nameLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(nameLen) > len(data) {
+		return errors.New("buffer too small for Agency Name content")
 	}
-	*aa = make(AgencyArray, count)
+	a.Name = string(data[offset : offset+int(nameLen)])
+	offset += int(nameLen)
 
-	var e error
-	i := 0
-	err := txn.Range(func(idx uint32) {
-		id, idOk := idCol.Get()
-		name, nameOk := nameCol.Get()
-		url, urlOk := urlCol.Get()
-		timezone, timezoneOk := timezoneCol.Get()
-
-		if !idOk || !nameOk || !urlOk || !timezoneOk {
-			e = errors.New("missing required fields")
-			return
-		}
-
-		(*aa)[i] = &Agency{
-			ID:       Key(id),
-			Name:     name,
-			URL:      url,
-			Timezone: timezone,
-		}
-		i++
-	})
-
-	if err != nil {
-		return err
+	// Unmarshal URL
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for Agency URL length")
 	}
-	if e != nil {
-		return e
+	urlLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(urlLen) > len(data) {
+		return errors.New("buffer too small for Agency URL content")
 	}
+	a.URL = string(data[offset : offset+int(urlLen)])
+	offset += int(urlLen)
 
+	// Unmarshal Timezone
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for Agency Timezone length")
+	}
+	timezoneLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(timezoneLen) > len(data) {
+		return errors.New("buffer too small for Agency Timezone content")
+	}
+	a.Timezone = string(data[offset : offset+int(timezoneLen)])
+	offset += int(timezoneLen)
+
+	if offset != len(data) {
+		return errors.New("agency buffer not fully consumed, trailing data exists")
+	}
 	return nil
 }
 

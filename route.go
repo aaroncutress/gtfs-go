@@ -1,12 +1,12 @@
 package gtfs
 
 import (
+	"encoding/binary"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
-
-	"github.com/kelindar/column"
 )
 
 type RouteType uint8
@@ -37,104 +37,141 @@ type Route struct {
 type RouteMap map[Key]*Route
 type RouteArray []*Route
 
-// Saves a route to the database
-func (r Route) Save(row column.Row) error {
-	row.SetString("agency_id", string(r.AgencyID))
-	row.SetString("name", r.Name)
-	row.SetUint("type", uint(r.Type))
-	row.SetString("colour", r.Colour)
-	row.SetString("shape_id", string(r.ShapeID))
-	row.SetRecord("stops", r.Stops)
+// Encode the Route struct into a byte slice
+// Format:
+// - AgencyID: 4-byte length + UTF-8 string
+// - Name: 4-byte length + UTF-8 string
+// - Type: 1-byte enum (RouteType)
+// - Colour: 4-byte length + UTF-8 string
+// - ShapeID: 4-byte length + UTF-8 string
+// - Stops: KeyArray (encoded as a byte slice)
+func (r Route) Encode() []byte {
+	agencyIDStr := string(r.AgencyID)
+	nameStr := r.Name
+	colourStr := r.Colour
+	shapeIDStr := string(r.ShapeID)
 
-	return nil
+	// Encode Stops field first to get its byte representation and length
+	stopsBytes := r.Stops.Encode()
+
+	// Calculate total length for fixed fields + length of encoded stops
+	totalLen := lenBytes + len(agencyIDStr) + // AgencyID
+		lenBytes + len(nameStr) + // Name
+		uint8Bytes + // Type (uint8)
+		lenBytes + len(colourStr) + // Colour
+		lenBytes + len(shapeIDStr) + // ShapeID
+		len(stopsBytes) // Length of encoded Stops data
+
+	data := make([]byte, totalLen)
+	offset := 0
+
+	// Marshal AgencyID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(agencyIDStr)))
+	offset += lenBytes
+	copy(data[offset:], agencyIDStr)
+	offset += len(agencyIDStr)
+
+	// Marshal Name
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(nameStr)))
+	offset += lenBytes
+	copy(data[offset:], nameStr)
+	offset += len(nameStr)
+
+	// Marshal Type
+	data[offset] = byte(r.Type)
+	offset += 1
+
+	// Marshal Colour
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(colourStr)))
+	offset += lenBytes
+	copy(data[offset:], colourStr)
+	offset += len(colourStr)
+
+	// Marshal ShapeID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(shapeIDStr)))
+	offset += lenBytes
+	copy(data[offset:], shapeIDStr)
+	offset += len(shapeIDStr)
+
+	// Append encoded Stops data
+	copy(data[offset:], stopsBytes)
+
+	return data
 }
 
-// Loads a route from the database
-func (r *Route) Load(row column.Row) error {
-	key, keyOk := row.Key()
-	agencyID, agencyIDOk := row.String("agency_id")
-	name, nameOk := row.String("name")
-	typeInt, typeIntOk := row.Uint("type")
-	colour, colourOk := row.String("colour")
-	shapeID, shapeIDOk := row.String("shape_id")
-	stopsAny, stopsOk := row.Record("stops")
-
-	if !keyOk || !agencyIDOk || !nameOk || !typeIntOk || !colourOk || !shapeIDOk || !stopsOk {
-		return errors.New("missing required fields")
+// Decode the byte slice into the Route struct
+func (r *Route) Decode(id Key, data []byte) error {
+	if r == nil {
+		return errors.New("cannot decode into a nil Route")
 	}
+	offset := 0
 
-	stops, ok := stopsAny.(*KeyArray)
-	if !ok {
-		return errors.New("invalid stops format")
+	// Set ID from parameter
+	r.ID = id
+
+	// Unmarshal AgencyID
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for AgencyID length")
 	}
-
-	*r = Route{
-		ID:       Key(key),
-		AgencyID: Key(agencyID),
-		Name:     name,
-		Type:     RouteType(typeInt),
-		Colour:   colour,
-		ShapeID:  Key(shapeID),
-		Stops:    *stops,
+	agencyIDLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(agencyIDLen) > len(data) {
+		return errors.New("buffer too small for AgencyID content")
 	}
+	r.AgencyID = Key(data[offset : offset+int(agencyIDLen)])
+	offset += int(agencyIDLen)
 
-	return nil
-}
-
-// Loads all routes from the database transaction
-func (ra *RouteArray) Load(txn *column.Txn) error {
-	idCol := txn.Key()
-	agencyIDCol := txn.String("agency_id")
-	nameCol := txn.String("name")
-	typeCol := txn.Uint("type")
-	colourCol := txn.String("colour")
-	shapeIDCol := txn.String("shape_id")
-	stopsCol := txn.Record("stops")
-
-	count := txn.Count()
-	if count == 0 {
-		return nil
+	// Unmarshal Name
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for Name length")
 	}
-	*ra = make(RouteArray, count)
+	nameLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(nameLen) > len(data) {
+		return errors.New("buffer too small for Name content")
+	}
+	r.Name = string(data[offset : offset+int(nameLen)])
+	offset += int(nameLen)
 
-	var e error
-	i := 0
-	err := txn.Range(func(idx uint32) {
-		id, idOk := idCol.Get()
-		agencyID, agencyIDOk := agencyIDCol.Get()
-		name, nameOk := nameCol.Get()
-		typeInt, typeIntOk := typeCol.Get()
-		colour, colourOk := colourCol.Get()
-		shapeID, shapeIDOk := shapeIDCol.Get()
-		stopsAny, stopsOk := stopsCol.Get()
+	// Unmarshal Type
+	if offset+1 > len(data) {
+		return errors.New("buffer too small for Type")
+	}
+	r.Type = RouteType(data[offset])
+	offset += 1
 
-		if !idOk || !agencyIDOk || !nameOk || !typeIntOk || !colourOk || !shapeIDOk || !stopsOk {
-			e = errors.New("missing required fields")
-			return
-		}
+	// Unmarshal Colour
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for Colour length")
+	}
+	colourLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(colourLen) > len(data) {
+		return errors.New("buffer too small for Colour content")
+	}
+	r.Colour = string(data[offset : offset+int(colourLen)])
+	offset += int(colourLen)
 
-		stops, ok := stopsAny.(*KeyArray)
-		if !ok {
-			e = errors.New("invalid stops format")
-			return
-		}
+	// Unmarshal ShapeID
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for ShapeID length")
+	}
+	shapeIDLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(shapeIDLen) > len(data) {
+		return errors.New("buffer too small for ShapeID content")
+	}
+	r.ShapeID = Key(data[offset : offset+int(shapeIDLen)])
+	offset += int(shapeIDLen)
 
-		(*ra)[i] = &Route{
-			ID:       Key(id),
-			AgencyID: Key(agencyID),
-			Name:     name,
-			Type:     RouteType(typeInt),
-			Colour:   colour,
-			ShapeID:  Key(shapeID),
-			Stops:    *stops,
-		}
-		i++
-	})
+	// The rest of the data belongs to Stops
+	if offset > len(data) {
+		return errors.New("offset beyond data length before decoding Stops")
+	}
+	stopsData := data[offset:]
+	err := r.Stops.Decode(stopsData)
 	if err != nil {
-		return err
-	}
-	if e != nil {
-		return e
+		return fmt.Errorf("failed to decode Stops: %w", err)
 	}
 
 	return nil
