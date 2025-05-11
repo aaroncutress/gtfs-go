@@ -179,7 +179,7 @@ func (g *GTFS) GetTripByID(tripID Key) (*Trip, error) {
 }
 
 // Returns all trips for a given route ID
-func (g *GTFS) GetTripsByRouteID(routeID Key) (TripArray, error) {
+func (g *GTFS) GetTripsByRouteID(routeID Key) (TripMap, error) {
 	var tripIDs *KeyArray
 
 	// Query the database for all trips associated with the route ID
@@ -204,7 +204,7 @@ func (g *GTFS) GetTripsByRouteID(routeID Key) (TripArray, error) {
 		return nil, err
 	}
 
-	trips := make(TripArray, len(*tripIDs))
+	trips := make(TripMap, len(*tripIDs))
 
 	// Query the database for each trip ID and load the trip data
 	err = g.db.View(func(tx *bolt.Tx) error {
@@ -212,7 +212,7 @@ func (g *GTFS) GetTripsByRouteID(routeID Key) (TripArray, error) {
 		if b == nil {
 			return errors.New("bucket not found")
 		}
-		for i, tripID := range *tripIDs {
+		for _, tripID := range *tripIDs {
 			data := b.Get([]byte(tripID))
 			if data == nil {
 				return errors.New("trip not found")
@@ -222,7 +222,7 @@ func (g *GTFS) GetTripsByRouteID(routeID Key) (TripArray, error) {
 			if err != nil {
 				return err
 			}
-			trips[i] = trip
+			trips[tripID] = trip
 		}
 		return nil
 	})
@@ -306,8 +306,8 @@ func (g *GTFS) GetServiceException(serviceID Key, date time.Time) (*ServiceExcep
 // --- Bulk Query Functions ---
 
 // Returns the agencies with the given IDs
-func (g *GTFS) GetAgenciesByIDs(agencyIDs []Key) (AgencyArray, error) {
-	agencies := make(AgencyArray, len(agencyIDs))
+func (g *GTFS) GetAgenciesByIDs(agencyIDs []Key) (AgencyMap, error) {
+	agencies := make(AgencyMap, len(agencyIDs))
 
 	// Query the database for each agency ID and load the agency data
 	err := g.db.View(func(tx *bolt.Tx) error {
@@ -315,7 +315,7 @@ func (g *GTFS) GetAgenciesByIDs(agencyIDs []Key) (AgencyArray, error) {
 		if b == nil {
 			return errors.New("bucket not found")
 		}
-		for i, agencyID := range agencyIDs {
+		for _, agencyID := range agencyIDs {
 			data := b.Get([]byte(agencyID))
 			if data == nil {
 				return errors.New("agency " + string(agencyID) + " not found")
@@ -325,7 +325,7 @@ func (g *GTFS) GetAgenciesByIDs(agencyIDs []Key) (AgencyArray, error) {
 			if err != nil {
 				return err
 			}
-			agencies[i] = agency
+			agencies[agencyID] = agency
 		}
 		return nil
 	})
@@ -338,8 +338,8 @@ func (g *GTFS) GetAgenciesByIDs(agencyIDs []Key) (AgencyArray, error) {
 }
 
 // Returns all agencies in the GTFS database
-func (g *GTFS) GetAllAgencies() (AgencyArray, error) {
-	var agencies AgencyArray
+func (g *GTFS) GetAllAgencies() (AgencyMap, error) {
+	var agencies AgencyMap
 
 	err := g.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("agencies"))
@@ -347,15 +347,16 @@ func (g *GTFS) GetAllAgencies() (AgencyArray, error) {
 			return errors.New("bucket not found")
 		}
 
-		agencies = make(AgencyArray, 0, b.Stats().KeyN)
+		agencies = make(AgencyMap, b.Stats().KeyN)
 
 		return b.ForEach(func(k, v []byte) error {
 			agency := &Agency{}
-			err := agency.Decode(Key(k), v)
+			key := Key(k)
+			err := agency.Decode(key, v)
 			if err != nil {
 				return err
 			}
-			agencies = append(agencies, agency)
+			agencies[key] = agency
 			return nil
 		})
 	})
@@ -367,8 +368,8 @@ func (g *GTFS) GetAllAgencies() (AgencyArray, error) {
 }
 
 // Returns the routes with the given IDs
-func (g *GTFS) GetRoutesByIDs(routeIDs []Key) (RouteArray, error) {
-	routes := make(RouteArray, len(routeIDs))
+func (g *GTFS) GetRoutesByIDs(routeIDs []Key) (RouteMap, error) {
+	routes := make(RouteMap, len(routeIDs))
 
 	// Query the database for each route ID and load the route data
 	err := g.db.View(func(tx *bolt.Tx) error {
@@ -376,7 +377,7 @@ func (g *GTFS) GetRoutesByIDs(routeIDs []Key) (RouteArray, error) {
 		if b == nil {
 			return errors.New("bucket not found")
 		}
-		for i, routeID := range routeIDs {
+		for _, routeID := range routeIDs {
 			data := b.Get([]byte(routeID))
 			if data == nil {
 				return errors.New("route " + string(routeID) + " not found")
@@ -386,7 +387,7 @@ func (g *GTFS) GetRoutesByIDs(routeIDs []Key) (RouteArray, error) {
 			if err != nil {
 				return err
 			}
-			routes[i] = route
+			routes[routeID] = route
 		}
 		return nil
 	})
@@ -399,8 +400,8 @@ func (g *GTFS) GetRoutesByIDs(routeIDs []Key) (RouteArray, error) {
 }
 
 // Returns all routes in the GTFS database
-func (g *GTFS) GetAllRoutes() (RouteArray, error) {
-	var routes RouteArray
+func (g *GTFS) GetAllRoutes() (RouteMap, error) {
+	var routes RouteMap
 
 	err := g.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("routes"))
@@ -408,15 +409,16 @@ func (g *GTFS) GetAllRoutes() (RouteArray, error) {
 			return errors.New("bucket not found")
 		}
 
-		routes = make(RouteArray, 0, b.Stats().KeyN)
+		routes = make(RouteMap, b.Stats().KeyN)
 
 		return b.ForEach(func(k, v []byte) error {
 			route := &Route{}
-			err := route.Decode(Key(k), v)
+			key := Key(k)
+			err := route.Decode(key, v)
 			if err != nil {
 				return err
 			}
-			routes = append(routes, route)
+			routes[key] = route
 			return nil
 		})
 	})
@@ -428,8 +430,8 @@ func (g *GTFS) GetAllRoutes() (RouteArray, error) {
 }
 
 // Returns the stops with the given IDs
-func (g *GTFS) GetStopsByIDs(stopIDs []Key) (StopArray, error) {
-	stops := make(StopArray, len(stopIDs))
+func (g *GTFS) GetStopsByIDs(stopIDs []Key) (StopMap, error) {
+	stops := make(StopMap, len(stopIDs))
 
 	// Query the database for each stop ID and load the stop data
 	err := g.db.View(func(tx *bolt.Tx) error {
@@ -437,7 +439,7 @@ func (g *GTFS) GetStopsByIDs(stopIDs []Key) (StopArray, error) {
 		if b == nil {
 			return errors.New("bucket not found")
 		}
-		for i, stopID := range stopIDs {
+		for _, stopID := range stopIDs {
 			data := b.Get([]byte(stopID))
 			if data == nil {
 				return errors.New("stop " + string(stopID) + " not found")
@@ -447,7 +449,7 @@ func (g *GTFS) GetStopsByIDs(stopIDs []Key) (StopArray, error) {
 			if err != nil {
 				return err
 			}
-			stops[i] = stop
+			stops[stopID] = stop
 		}
 		return nil
 	})
@@ -460,8 +462,8 @@ func (g *GTFS) GetStopsByIDs(stopIDs []Key) (StopArray, error) {
 }
 
 // Returns all stops in the GTFS database
-func (g *GTFS) GetAllStops() (StopArray, error) {
-	var stops StopArray
+func (g *GTFS) GetAllStops() (StopMap, error) {
+	var stops StopMap
 
 	err := g.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("stops"))
@@ -469,15 +471,16 @@ func (g *GTFS) GetAllStops() (StopArray, error) {
 			return errors.New("bucket not found")
 		}
 
-		stops = make(StopArray, 0, b.Stats().KeyN)
+		stops = make(StopMap, b.Stats().KeyN)
 
 		return b.ForEach(func(k, v []byte) error {
 			stop := &Stop{}
-			err := stop.Decode(Key(k), v)
+			key := Key(k)
+			err := stop.Decode(key, v)
 			if err != nil {
 				return err
 			}
-			stops = append(stops, stop)
+			stops[key] = stop
 			return nil
 		})
 	})
@@ -489,8 +492,8 @@ func (g *GTFS) GetAllStops() (StopArray, error) {
 }
 
 // Returns the shapes with the given IDs
-func (g *GTFS) GetShapesByIDs(shapeIDs []Key) (ShapeArray, error) {
-	shapes := make(ShapeArray, len(shapeIDs))
+func (g *GTFS) GetShapesByIDs(shapeIDs []Key) (ShapeMap, error) {
+	shapes := make(ShapeMap, len(shapeIDs))
 
 	// Query the database for each shape ID and load the shape data
 	err := g.db.View(func(tx *bolt.Tx) error {
@@ -498,7 +501,7 @@ func (g *GTFS) GetShapesByIDs(shapeIDs []Key) (ShapeArray, error) {
 		if b == nil {
 			return errors.New("bucket not found")
 		}
-		for i, shapeID := range shapeIDs {
+		for _, shapeID := range shapeIDs {
 			data := b.Get([]byte(shapeID))
 			if data == nil {
 				return errors.New("shape " + string(shapeID) + " not found")
@@ -508,7 +511,7 @@ func (g *GTFS) GetShapesByIDs(shapeIDs []Key) (ShapeArray, error) {
 			if err != nil {
 				return err
 			}
-			shapes[i] = shape
+			shapes[shapeID] = shape
 		}
 		return nil
 	})
@@ -521,8 +524,8 @@ func (g *GTFS) GetShapesByIDs(shapeIDs []Key) (ShapeArray, error) {
 }
 
 // Returns all shapes in the GTFS database
-func (g *GTFS) GetAllShapes() (ShapeArray, error) {
-	var shapes ShapeArray
+func (g *GTFS) GetAllShapes() (ShapeMap, error) {
+	var shapes ShapeMap
 
 	err := g.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("shapes"))
@@ -530,15 +533,16 @@ func (g *GTFS) GetAllShapes() (ShapeArray, error) {
 			return errors.New("bucket not found")
 		}
 
-		shapes = make(ShapeArray, 0, b.Stats().KeyN)
+		shapes = make(ShapeMap, b.Stats().KeyN)
 
 		return b.ForEach(func(k, v []byte) error {
 			shape := &Shape{}
-			err := shape.Decode(Key(k), v)
+			key := Key(k)
+			err := shape.Decode(key, v)
 			if err != nil {
 				return err
 			}
-			shapes = append(shapes, shape)
+			shapes[key] = shape
 			return nil
 		})
 	})
@@ -550,8 +554,8 @@ func (g *GTFS) GetAllShapes() (ShapeArray, error) {
 }
 
 // Returns the trips with the given IDs
-func (g *GTFS) GetTripsByIDs(tripIDs []Key) (TripArray, error) {
-	trips := make(TripArray, len(tripIDs))
+func (g *GTFS) GetTripsByIDs(tripIDs []Key) (TripMap, error) {
+	trips := make(TripMap, len(tripIDs))
 
 	// Query the database for each trip ID and load the trip data
 	err := g.db.View(func(tx *bolt.Tx) error {
@@ -559,7 +563,7 @@ func (g *GTFS) GetTripsByIDs(tripIDs []Key) (TripArray, error) {
 		if b == nil {
 			return errors.New("bucket not found")
 		}
-		for i, tripID := range tripIDs {
+		for _, tripID := range tripIDs {
 			data := b.Get([]byte(tripID))
 			if data == nil {
 				return errors.New("trip " + string(tripID) + " not found")
@@ -569,7 +573,7 @@ func (g *GTFS) GetTripsByIDs(tripIDs []Key) (TripArray, error) {
 			if err != nil {
 				return err
 			}
-			trips[i] = trip
+			trips[tripID] = trip
 		}
 		return nil
 	})
@@ -582,8 +586,8 @@ func (g *GTFS) GetTripsByIDs(tripIDs []Key) (TripArray, error) {
 }
 
 // Returns all trips in the GTFS database
-func (g *GTFS) GetAllTrips() (TripArray, error) {
-	var trips TripArray
+func (g *GTFS) GetAllTrips() (TripMap, error) {
+	var trips TripMap
 
 	err := g.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("trips"))
@@ -591,15 +595,16 @@ func (g *GTFS) GetAllTrips() (TripArray, error) {
 			return errors.New("bucket not found")
 		}
 
-		trips = make(TripArray, 0, b.Stats().KeyN)
+		trips = make(TripMap, b.Stats().KeyN)
 
 		return b.ForEach(func(k, v []byte) error {
 			trip := &Trip{}
-			err := trip.Decode(Key(k), v)
+			key := Key(k)
+			err := trip.Decode(key, v)
 			if err != nil {
 				return err
 			}
-			trips = append(trips, trip)
+			trips[key] = trip
 			return nil
 		})
 	})
@@ -611,8 +616,8 @@ func (g *GTFS) GetAllTrips() (TripArray, error) {
 }
 
 // Returns the services with the given IDs
-func (g *GTFS) GetServicesByIDs(serviceIDs []Key) (ServiceArray, error) {
-	services := make(ServiceArray, len(serviceIDs))
+func (g *GTFS) GetServicesByIDs(serviceIDs []Key) (ServiceMap, error) {
+	services := make(ServiceMap, len(serviceIDs))
 
 	// Query the database for each service ID and load the service data
 	err := g.db.View(func(tx *bolt.Tx) error {
@@ -620,7 +625,7 @@ func (g *GTFS) GetServicesByIDs(serviceIDs []Key) (ServiceArray, error) {
 		if b == nil {
 			return errors.New("bucket not found")
 		}
-		for i, serviceID := range serviceIDs {
+		for _, serviceID := range serviceIDs {
 			data := b.Get([]byte(serviceID))
 			if data == nil {
 				return errors.New("service " + string(serviceID) + " not found")
@@ -630,7 +635,7 @@ func (g *GTFS) GetServicesByIDs(serviceIDs []Key) (ServiceArray, error) {
 			if err != nil {
 				return err
 			}
-			services[i] = service
+			services[serviceID] = service
 		}
 		return nil
 	})
@@ -643,8 +648,8 @@ func (g *GTFS) GetServicesByIDs(serviceIDs []Key) (ServiceArray, error) {
 }
 
 // Returns all services in the GTFS database
-func (g *GTFS) GetAllServices() (ServiceArray, error) {
-	var services ServiceArray
+func (g *GTFS) GetAllServices() (ServiceMap, error) {
+	var services ServiceMap
 
 	err := g.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("services"))
@@ -652,15 +657,16 @@ func (g *GTFS) GetAllServices() (ServiceArray, error) {
 			return errors.New("bucket not found")
 		}
 
-		services = make(ServiceArray, 0, b.Stats().KeyN)
+		services = make(ServiceMap, b.Stats().KeyN)
 
 		return b.ForEach(func(k, v []byte) error {
 			service := &Service{}
-			err := service.Decode(Key(k), v)
+			key := Key(k)
+			err := service.Decode(key, v)
 			if err != nil {
 				return err
 			}
-			services = append(services, service)
+			services[key] = service
 			return nil
 		})
 	})
@@ -672,8 +678,8 @@ func (g *GTFS) GetAllServices() (ServiceArray, error) {
 }
 
 // Returns all service exceptions in the GTFS database
-func (g *GTFS) GetAllServiceExceptions() (ServiceExceptionArray, error) {
-	var exceptions ServiceExceptionArray
+func (g *GTFS) GetAllServiceExceptions() (ServiceExceptionMap, error) {
+	var exceptions ServiceExceptionMap
 
 	err := g.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("serviceExceptions"))
@@ -681,7 +687,7 @@ func (g *GTFS) GetAllServiceExceptions() (ServiceExceptionArray, error) {
 			return errors.New("bucket not found")
 		}
 
-		exceptions = make(ServiceExceptionArray, 0, b.Stats().KeyN)
+		exceptions = make(ServiceExceptionMap, b.Stats().KeyN)
 
 		return b.ForEach(func(k, v []byte) error {
 			exception := &ServiceException{}
@@ -689,7 +695,7 @@ func (g *GTFS) GetAllServiceExceptions() (ServiceExceptionArray, error) {
 			if err != nil {
 				return err
 			}
-			exceptions = append(exceptions, exception)
+			exceptions[Key(k)] = exception
 			return nil
 		})
 	})

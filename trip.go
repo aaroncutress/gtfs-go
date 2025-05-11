@@ -223,7 +223,6 @@ type Trip struct {
 	Stops     TripStopArray
 }
 type TripMap map[Key]*Trip
-type TripArray []*Trip
 
 // Encode the Trip struct into a byte slice
 // Format:

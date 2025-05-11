@@ -30,7 +30,6 @@ type Service struct {
 	EndDate   time.Time
 }
 type ServiceMap map[Key]*Service
-type ServiceArray []*Service
 
 // Encode serializes the Service struct (excluding ID) into a byte slice.
 // Format:

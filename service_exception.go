@@ -24,7 +24,6 @@ type ServiceException struct {
 	Type      ExceptionType
 }
 type ServiceExceptionMap map[Key]*ServiceException
-type ServiceExceptionArray []*ServiceException
 
 // Encode serializes the ServiceException struct into a byte slice.
 // Format:

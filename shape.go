@@ -12,7 +12,6 @@ type Shape struct {
 	Coordinates CoordinateArray
 }
 type ShapeMap map[Key]*Shape
-type ShapeArray []*Shape
 
 // Encode serializes the Shape struct (excluding ID) into a byte slice.
 // Format:

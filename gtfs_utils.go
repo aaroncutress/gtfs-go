@@ -42,15 +42,21 @@ func isTripWithinInterval(tripStartTime, tripEndTime, tSeconds, bufferSeconds in
 }
 
 // Returns the trips that are running at the given time with a buffer, from the given array
-func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer time.Duration) (TripArray, error) {
-	currentTrips := make(TripArray, 0, len(trips))
+func (g *GTFS) GetCurrentTripsWithBuffer(trips TripMap, t time.Time, buffer time.Duration) (TripMap, error) {
+	currentTrips := make(TripMap, len(trips))
 
 	if len(trips) == 0 {
 		log.Debug("No trips to check")
 		return currentTrips, nil
 	}
 
-	route, err := g.GetRouteByID(trips[0].RouteID)
+	var firstTrip *Trip
+	for _, trip := range trips {
+		firstTrip = trip
+		break
+	}
+
+	route, err := g.GetRouteByID(firstTrip.RouteID)
 	if err != nil {
 		log.Errorf("Failed to get route by ID: %v", err)
 		return nil, err
@@ -74,7 +80,7 @@ func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer ti
 	weekday := t.Weekday()
 
 	runningCache := make(map[Key]bool) // service id -> running
-	for _, trip := range trips {
+	for tripID, trip := range trips {
 		// Check if the trip is running on the current day
 		running, ok := runningCache[trip.ServiceID]
 		if !ok {
@@ -106,31 +112,31 @@ func (g *GTFS) GetCurrentTripsWithBuffer(trips TripArray, t time.Time, buffer ti
 			continue
 		}
 
-		currentTrips = append(currentTrips, trip)
+		currentTrips[tripID] = trip
 	}
 
 	return currentTrips, nil
 }
 
 // Returns the trips that are running at the given time from the given array
-func (g *GTFS) GetCurrentTripsAt(trips TripArray, t time.Time) (TripArray, error) {
+func (g *GTFS) GetCurrentTripsAt(trips TripMap, t time.Time) (TripMap, error) {
 	return g.GetCurrentTripsWithBuffer(trips, t, 0)
 }
 
 // Returns the trips that are running between the given start and end times from the given array
-func (g *GTFS) GetCurrentTripsBetween(trips TripArray, start, end time.Time) (TripArray, error) {
+func (g *GTFS) GetCurrentTripsBetween(trips TripMap, start, end time.Time) (TripMap, error) {
 	buffer := end.Sub(start) / 2
 	middle := start.Add(buffer)
 	return g.GetCurrentTripsWithBuffer(trips, middle, buffer)
 }
 
 // Returns the trips that are currently running from the given array
-func (g *GTFS) GetCurrentTrips(trips TripArray) (TripArray, error) {
+func (g *GTFS) GetCurrentTrips(trips TripMap) (TripMap, error) {
 	return g.GetCurrentTripsWithBuffer(trips, time.Now(), 0)
 }
 
 // Returns all trips that are currently running
-func (g *GTFS) GetAllCurrentTrips() (TripArray, error) {
+func (g *GTFS) GetAllCurrentTrips() (TripMap, error) {
 	// Fetch all trips from the GTFS database
 	trips, err := g.GetAllTrips()
 	if err != nil {

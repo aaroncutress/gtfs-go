@@ -35,7 +35,6 @@ type Route struct {
 	Stops    KeyArray
 }
 type RouteMap map[Key]*Route
-type RouteArray []*Route
 
 // Encode the Route struct into a byte slice
 // Format:

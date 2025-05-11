@@ -14,7 +14,6 @@ type Agency struct {
 	URL      string
 	Timezone string
 }
-type AgencyArray []*Agency
 type AgencyMap map[Key]*Agency
 
 // Encode serializes the Agency struct (excluding ID) into a byte slice.

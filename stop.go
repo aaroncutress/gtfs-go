@@ -41,7 +41,6 @@ type Stop struct {
 	SupportedModes ModeFlag
 }
 type StopMap map[Key]*Stop
-type StopArray []*Stop
 
 // Encode serializes the Stop struct (excluding ID) into a byte slice.
 // Format:
