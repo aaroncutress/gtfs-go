@@ -318,7 +318,7 @@ func (g *GTFS) GetAgenciesByIDs(agencyIDs []Key) (AgencyMap, error) {
 		for _, agencyID := range agencyIDs {
 			data := b.Get([]byte(agencyID))
 			if data == nil {
-				return errors.New("agency " + string(agencyID) + " not found")
+				continue
 			}
 			agency := &Agency{}
 			err := agency.Decode(agencyID, data)
@@ -380,7 +380,7 @@ func (g *GTFS) GetRoutesByIDs(routeIDs []Key) (RouteMap, error) {
 		for _, routeID := range routeIDs {
 			data := b.Get([]byte(routeID))
 			if data == nil {
-				return errors.New("route " + string(routeID) + " not found")
+				continue
 			}
 			route := &Route{}
 			err := route.Decode(routeID, data)
@@ -442,7 +442,7 @@ func (g *GTFS) GetStopsByIDs(stopIDs []Key) (StopMap, error) {
 		for _, stopID := range stopIDs {
 			data := b.Get([]byte(stopID))
 			if data == nil {
-				return errors.New("stop " + string(stopID) + " not found")
+				continue
 			}
 			stop := &Stop{}
 			err := stop.Decode(stopID, data)
@@ -504,7 +504,7 @@ func (g *GTFS) GetShapesByIDs(shapeIDs []Key) (ShapeMap, error) {
 		for _, shapeID := range shapeIDs {
 			data := b.Get([]byte(shapeID))
 			if data == nil {
-				return errors.New("shape " + string(shapeID) + " not found")
+				continue
 			}
 			shape := &Shape{}
 			err := shape.Decode(shapeID, data)
@@ -566,7 +566,7 @@ func (g *GTFS) GetTripsByIDs(tripIDs []Key) (TripMap, error) {
 		for _, tripID := range tripIDs {
 			data := b.Get([]byte(tripID))
 			if data == nil {
-				return errors.New("trip " + string(tripID) + " not found")
+				continue
 			}
 			trip := &Trip{}
 			err := trip.Decode(tripID, data)
@@ -628,7 +628,7 @@ func (g *GTFS) GetServicesByIDs(serviceIDs []Key) (ServiceMap, error) {
 		for _, serviceID := range serviceIDs {
 			data := b.Get([]byte(serviceID))
 			if data == nil {
-				return errors.New("service " + string(serviceID) + " not found")
+				continue
 			}
 			service := &Service{}
 			err := service.Decode(serviceID, data)
