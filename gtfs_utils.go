@@ -96,6 +96,8 @@ func (g *GTFS) GetCurrentTripsWithBuffer(trips TripMap, t time.Time, buffer time
 				running = exception != nil && bool(exception.Type)
 			}
 
+			running = running && service.StartDate.Before(t) && service.EndDate.After(t)
+
 			runningCache[trip.ServiceID] = running
 		}
 
