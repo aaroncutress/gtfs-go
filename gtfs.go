@@ -695,7 +695,11 @@ func (g *GTFS) GetAllServiceExceptions() (ServiceExceptionMap, error) {
 			if err != nil {
 				return err
 			}
-			exceptions[Key(k)] = exception
+			key := ServiceExceptionKey{
+				ServiceID: exception.ServiceID,
+				Date:      exception.Date,
+			}
+			exceptions[key] = exception
 			return nil
 		})
 	})

@@ -23,7 +23,11 @@ type ServiceException struct {
 	Date      time.Time
 	Type      ExceptionType
 }
-type ServiceExceptionMap map[Key]*ServiceException
+type ServiceExceptionKey struct {
+	ServiceID Key
+	Date      time.Time
+}
+type ServiceExceptionMap map[ServiceExceptionKey]*ServiceException
 
 // Encode serializes the ServiceException struct into a byte slice.
 // Format:
@@ -141,7 +145,12 @@ func ParseServiceExceptions(file io.Reader) (ServiceExceptionMap, error) {
 			return nil, errors.New("invalid exception type")
 		}
 
-		exceptions[serviceID] = &ServiceException{
+		key := ServiceExceptionKey{
+			ServiceID: serviceID,
+			Date:      date,
+		}
+
+		exceptions[key] = &ServiceException{
 			ServiceID: serviceID,
 			Date:      date,
 			Type:      exceptionType,
