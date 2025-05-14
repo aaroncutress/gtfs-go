@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/umahmood/haversine"
+	"github.com/paulmach/orb"
+	"github.com/paulmach/orb/geo"
 )
 
 type Key string
@@ -125,13 +126,14 @@ func (c Coordinate) IsValid() bool {
 	return c.Latitude >= -90 && c.Latitude <= 90 && c.Longitude >= -180 && c.Longitude <= 180
 }
 
-// Calculate the distance to another coordinate using the Haversine formula.
+// Calculate the distance to another coordinate in metres using the Haversine formula
 func (c Coordinate) DistanceTo(other Coordinate) float64 {
-	_, km := haversine.Distance(
-		haversine.Coord{Lat: c.Latitude, Lon: c.Longitude},
-		haversine.Coord{Lat: other.Latitude, Lon: other.Longitude},
-	)
-	return km
+	return geo.DistanceHaversine(orb.Point{c.Longitude, c.Latitude}, orb.Point{other.Longitude, other.Latitude})
+}
+
+// Calculate the bearing to another coordinate in degrees
+func (c Coordinate) BearingTo(other Coordinate) float64 {
+	return geo.Bearing(orb.Point{c.Longitude, c.Latitude}, orb.Point{other.Longitude, other.Latitude})
 }
 
 // Encode the Coordinate into a byte slice

@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/charmbracelet/log v0.4.1
 	github.com/hashicorp/go-set/v3 v3.0.0
-	github.com/umahmood/haversine v0.0.0-20151105152445-808ab04add26
+	github.com/paulmach/orb v0.11.1
 	go.etcd.io/bbolt v1.4.0
 	resty.dev/v3 v3.0.0-beta.2
 )
