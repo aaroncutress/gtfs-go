@@ -86,14 +86,15 @@ func (g *GTFS) GetCurrentTripsWithBuffer(trips TripMap, t time.Time, buffer time
 		if !ok {
 			service, err := g.GetServiceByID(trip.ServiceID)
 			if err != nil {
+				log.Errorf("Failed to get service by ID: %v", err)
 				return nil, err
 			}
 			exception, _ := g.GetServiceException(trip.ServiceID, t)
 
-			if hasDay(service.Weekdays, weekday) {
-				running = exception == nil || !bool(exception.Type)
+			if exception != nil {
+				running = exception.Type == AddedExceptionType
 			} else {
-				running = exception != nil && bool(exception.Type)
+				running = hasDay(service.Weekdays, weekday)
 			}
 
 			running = running && service.StartDate.Before(t) && service.EndDate.After(t)
