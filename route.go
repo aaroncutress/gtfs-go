@@ -26,13 +26,14 @@ const (
 
 // Represents a route in a transit system
 type Route struct {
-	ID       Key
-	AgencyID Key
-	Name     string
-	Type     RouteType
-	Colour   string
-	ShapeID  Key
-	Stops    KeyArray
+	ID              Key
+	AgencyID        Key
+	Name            string
+	Type            RouteType
+	Colour          string
+	InboundShapeID  *Key
+	OutboundShapeID *Key
+	Stops           KeyArray
 }
 type RouteMap map[Key]*Route
 
@@ -42,13 +43,21 @@ type RouteMap map[Key]*Route
 // - Name: 4-byte length + UTF-8 string
 // - Type: 1-byte enum (RouteType)
 // - Colour: 4-byte length + UTF-8 string
-// - ShapeID: 4-byte length + UTF-8 string
+// - InboundShapeID: 4-byte length + UTF-8 string
+// - OutboundShapeID: 4-byte length + UTF-8 string
 // - Stops: KeyArray (encoded as a byte slice)
 func (r Route) Encode() []byte {
 	agencyIDStr := string(r.AgencyID)
 	nameStr := r.Name
 	colourStr := r.Colour
-	shapeIDStr := string(r.ShapeID)
+	inboundShapeIDStr := ""
+	if r.InboundShapeID != nil {
+		inboundShapeIDStr = string(*r.InboundShapeID)
+	}
+	outboundShapeIDStr := ""
+	if r.OutboundShapeID != nil {
+		outboundShapeIDStr = string(*r.OutboundShapeID)
+	}
 
 	// Encode Stops field first to get its byte representation and length
 	stopsBytes := r.Stops.Encode()
@@ -58,7 +67,8 @@ func (r Route) Encode() []byte {
 		lenBytes + len(nameStr) + // Name
 		uint8Bytes + // Type (uint8)
 		lenBytes + len(colourStr) + // Colour
-		lenBytes + len(shapeIDStr) + // ShapeID
+		lenBytes + len(inboundShapeIDStr) + // InboundShapeID
+		lenBytes + len(outboundShapeIDStr) + // OutboundShapeID
 		len(stopsBytes) // Length of encoded Stops data
 
 	data := make([]byte, totalLen)
@@ -86,11 +96,17 @@ func (r Route) Encode() []byte {
 	copy(data[offset:], colourStr)
 	offset += len(colourStr)
 
-	// Marshal ShapeID
-	binary.BigEndian.PutUint32(data[offset:], uint32(len(shapeIDStr)))
+	// Marshal InboundShapeID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(inboundShapeIDStr)))
 	offset += lenBytes
-	copy(data[offset:], shapeIDStr)
-	offset += len(shapeIDStr)
+	copy(data[offset:], inboundShapeIDStr)
+	offset += len(inboundShapeIDStr)
+
+	// Marshal OutboundShapeID
+	binary.BigEndian.PutUint32(data[offset:], uint32(len(outboundShapeIDStr)))
+	offset += lenBytes
+	copy(data[offset:], outboundShapeIDStr)
+	offset += len(outboundShapeIDStr)
 
 	// Append encoded Stops data
 	copy(data[offset:], stopsBytes)
@@ -151,17 +167,39 @@ func (r *Route) Decode(id Key, data []byte) error {
 	r.Colour = string(data[offset : offset+int(colourLen)])
 	offset += int(colourLen)
 
-	// Unmarshal ShapeID
+	// Unmarshal InboundShapeID
 	if offset+lenBytes > len(data) {
-		return errors.New("buffer too small for ShapeID length")
+		return errors.New("buffer too small for InboundShapeID length")
 	}
-	shapeIDLen := binary.BigEndian.Uint32(data[offset:])
+	inboundShapeIDLen := binary.BigEndian.Uint32(data[offset:])
 	offset += lenBytes
-	if offset+int(shapeIDLen) > len(data) {
-		return errors.New("buffer too small for ShapeID content")
+	if offset+int(inboundShapeIDLen) > len(data) {
+		return errors.New("buffer too small for InboundShapeID content")
 	}
-	r.ShapeID = Key(data[offset : offset+int(shapeIDLen)])
-	offset += int(shapeIDLen)
+	if inboundShapeIDLen > 0 {
+		inboundShapeID := Key(data[offset : offset+int(inboundShapeIDLen)])
+		r.InboundShapeID = &inboundShapeID
+		offset += int(inboundShapeIDLen)
+	} else {
+		r.InboundShapeID = nil
+	}
+
+	// Unmarshal OutboundShapeID
+	if offset+lenBytes > len(data) {
+		return errors.New("buffer too small for OutboundShapeID length")
+	}
+	outboundShapeIDLen := binary.BigEndian.Uint32(data[offset:])
+	offset += lenBytes
+	if offset+int(outboundShapeIDLen) > len(data) {
+		return errors.New("buffer too small for OutboundShapeID content")
+	}
+	if outboundShapeIDLen > 0 {
+		outboundShapeID := Key(data[offset : offset+int(outboundShapeIDLen)])
+		r.OutboundShapeID = &outboundShapeID
+		offset += int(outboundShapeIDLen)
+	} else {
+		r.OutboundShapeID = nil
+	}
 
 	// The rest of the data belongs to Stops
 	if offset > len(data) {

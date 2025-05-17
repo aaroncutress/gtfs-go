@@ -11,7 +11,7 @@ const (
 )
 
 // Current version of the GTFS database
-const CurrentVersion = 2
+const CurrentVersion = 3
 
 // Number of seconds in a day
 const secondsInDay = 24 * 60 * 60

@@ -20,8 +20,9 @@ import (
 
 // Temporary struct to hold the shape ID and stop IDs for each route
 type routeShapeAndStops struct {
-	shapeID Key
-	stopIDs KeyArray
+	inboundShapeID  *Key
+	outboundShapeID *Key
+	stopIDs         KeyArray
 }
 type routeShapeAndStopsMap map[Key]routeShapeAndStops
 
@@ -68,17 +69,6 @@ func getRouteShapeAndStops(tripMap TripMap) (routeShapeAndStopsMap, error) {
 			}
 		}
 
-		var mostCommonShapeID Key
-		if maxInboundCount > maxOutboundCount {
-			mostCommonShapeID = mostCommonInboundShapeID
-		} else {
-			mostCommonShapeID = mostCommonOutboundShapeID
-		}
-
-		if mostCommonShapeID == "" {
-			continue
-		}
-
 		stopIDs := make(KeyArray, 0)
 
 		if mostCommonInboundShapeID != "" {
@@ -106,8 +96,9 @@ func getRouteShapeAndStops(tripMap TripMap) (routeShapeAndStopsMap, error) {
 		}
 
 		shapeAndStops[routeID] = routeShapeAndStops{
-			shapeID: mostCommonShapeID,
-			stopIDs: set.From[Key](stopIDs).Slice(),
+			inboundShapeID:  &mostCommonInboundShapeID,
+			outboundShapeID: &mostCommonOutboundShapeID,
+			stopIDs:         set.From[Key](stopIDs).Slice(),
 		}
 	}
 
@@ -426,7 +417,8 @@ func (g *GTFS) FromURL(gtfsURL, dbFile string) error {
 		if !ok {
 			continue
 		}
-		route.ShapeID = shapeAndStopsData.shapeID
+		route.InboundShapeID = shapeAndStopsData.inboundShapeID
+		route.OutboundShapeID = shapeAndStopsData.outboundShapeID
 		route.Stops = shapeAndStopsData.stopIDs
 		routes[routeID] = route
 	}
